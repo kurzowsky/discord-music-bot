@@ -28,20 +28,15 @@ intents.presences = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # --- KONFIGURACJA YOUTUBE I FFMPEG ---
-# --- KONFIGURACJA YOUTUBE (Zaktualizowana pod Railway) ---
 YDL_OPTIONS = {
     'format': 'bestaudio/best',
     'noplaylist': True,
-    'quiet': True,
+    # 'quiet': True, # Możesz zakomentować na chwilę, żeby widzieć więcej logów w razie błędów
     'default_search': 'auto',
     'source_address': '0.0.0.0',
-    # To jest kluczowe, żeby YouTube nie blokował bota na serwerze:
-    'extractor_args': {
-        'youtube': {
-            'player_client': ['android', 'ios']  # Udajemy urządzenia mobilne, one rzadziej są blokowane
-        }
-    },
-    # Usuwamy ręczne nagłówki User-Agent, bo yt-dlp teraz lepiej radzi sobie sam
+    # Usunęliśmy sekcję 'extractor_args' z wymuszaniem iOS/Android, 
+    # bo to ona powoduje błędy o "PO Token" na serwerach.
+    # Pozwalamy yt-dlp samemu wybrać najlepszego klienta (zazwyczaj web/android-creator).
 }
 
 FFMPEG_OPTIONS = {
