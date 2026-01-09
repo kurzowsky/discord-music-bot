@@ -33,7 +33,7 @@ def get_faceit_stats(player_name: str) -> Optional[Dict[str, Any]]:
         # Pobieranie stats
         kd_ratio = get_stat_value("K/D Ratio")
         winrate = get_stat_value("Winrate")
-        matches = get_stat_value("Matches ")
+        matches = get_stat_value("Matches")
         headshots = get_stat_value("Headshots")
         elo = get_stat_value("Elo")
 
