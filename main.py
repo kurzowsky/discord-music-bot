@@ -226,7 +226,7 @@ async def pomoc(ctx):
     embed.add_field(
         name="🛡️ Administracja i Inne",
         value=(
-            "`!clear <ilość>` - Usuwa podaną liczbę wiadomości.\n"
+            "`!usun <ilość>` - Usuwa podaną liczbę wiadomości.\n"
             "`!zmien_nick <osoba> <nowy_nick>` - Zmienia nick użytkownika.\n"
             "`!block_nickname <osoba> <nick>` - Blokuje zmianę nicku.\n"
             "`!regulamin` - Wyświetla zasady serwera."
@@ -526,7 +526,7 @@ async def kostka(ctx):
 
 @bot.command()
 @commands.has_permissions(manage_messages=True)
-async def clear(ctx, ilosc: int = 5):
+async def usun(ctx, ilosc: int = 5):
     """Czyści podaną ilość wiadomości (domyślnie 5). np. !clear 10"""
     await ctx.channel.purge(limit=ilosc + 1) # +1 żeby usunąć też komendę !clear
     # Wysyła info, które znika po 3 sekundach
@@ -551,6 +551,7 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
 
 
 
