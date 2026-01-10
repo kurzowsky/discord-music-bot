@@ -230,6 +230,7 @@ async def pomoc(ctx):
             "`!zmien_nick <osoba> <nowy_nick>` - Zmienia nick użytkownika.\n"
             "`!block_nickname <osoba> <nick>` - Blokuje zmianę nicku.\n"
             "`!regulamin` - Wyświetla zasady serwera."
+            "`!snipe` - Pokazuje ostatnią usuniętą wiadomość."
         ),
         inline=False
     )
@@ -532,6 +533,39 @@ async def usun(ctx, ilosc: int = 5):
     # Wysyła info, które znika po 3 sekundach
     await ctx.send(f"🗑️ Usunięto {ilosc} wiadomości.", delete_after=3)
 
+last_deleted_msg = {} # Słownik do przechowywania usuniętych wiadomości
+
+@bot.event
+async def on_message_delete(message):
+    """Zapisuje usuniętą wiadomość w pamięci."""
+    # Ignoruj, jeśli usunięto wiadomość bota
+    if message.author.bot:
+        return
+    
+    # Zapisz treść, autora i czas dla danego kanału
+    last_deleted_msg[message.channel.id] = {
+        "content": message.content,
+        "author": message.author,
+        "time": discord.utils.utcnow()
+    }
+
+@bot.command()
+async def snipe(ctx):
+    """Pokazuje ostatnio usuniętą wiadomość na tym kanale."""
+    channel_id = ctx.channel.id
+    
+    if channel_id not in last_deleted_msg:
+        await ctx.send("❌ Nie ma żadnych usuniętych wiadomości do podglądu.")
+        return
+    
+    saved = last_deleted_msg[channel_id]
+    
+    embed = discord.Embed(description=saved["content"], color=discord.Color.red(), timestamp=saved["time"])
+    embed.set_author(name=f"{saved['author'].display_name} usunął:", icon_url=saved['author'].display_avatar.url)
+    embed.set_footer(text="Złapano w 4K 📸")
+    
+    await ctx.send(embed=embed)
+    
 # Wydarzenie, które jest wywoływane, gdy bot jest gotowy
 @bot.event
 async def on_ready() -> None:
@@ -551,6 +585,7 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
 
 
 
