@@ -354,7 +354,7 @@ async def teams(ctx):
     team_a_names = [p.display_name for p in team_a]
     team_b_names = [p.display_name for p in team_b]
 
-    embed = discord.Embed(title="⚔️ Wylosowane Drużyny", description="Użyj `!mv A <ID_KANAŁU>` lub `!mv B <ID_KANAŁU>`, aby przenieść graczy.", color=discord.Color.gold())
+    embed = discord.Embed(title="⚔️ Wylosowane Drużyny", description="Użyj `!mv A` lub `!mv B`, aby przenieść graczy.", color=discord.Color.gold())
     embed.add_field(name="🔴 Team A", value="\n".join(team_a_names), inline=True)
     embed.add_field(name="🔵 Team B", value="\n".join(team_b_names), inline=True)
 
@@ -551,6 +551,7 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
 
 
 
