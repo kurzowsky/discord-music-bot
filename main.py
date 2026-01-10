@@ -535,23 +535,33 @@ async def usun(ctx, ilosc: int = 5):
 
 last_deleted_msg = {} # Słownik do przechowywania usuniętych wiadomości
 
+# Upewnij się, że masz tę zmienną na górze pliku (jeśli już jest, nie kopiuj jej drugi raz)
+# last_deleted_msg = {} 
+
 @bot.event
 async def on_message_delete(message):
-    """Zapisuje usuniętą wiadomość w pamięci."""
+    """Zapisuje usuniętą wiadomość (tekst oraz obraz) w pamięci."""
     # Ignoruj, jeśli usunięto wiadomość bota
     if message.author.bot:
         return
     
-    # Zapisz treść, autora i czas dla danego kanału
+    # Sprawdzamy, czy wiadomość miała jakieś załączniki (zdjęcia)
+    image_url = None
+    if message.attachments:
+        # Bierzemy URL pierwszego załącznika (korzystamy z proxy_url, bo jest trwalszy po usunięciu)
+        image_url = message.attachments[0].proxy_url
+
+    # Zapisz dane dla danego kanału
     last_deleted_msg[message.channel.id] = {
         "content": message.content,
         "author": message.author,
-        "time": discord.utils.utcnow()
+        "time": discord.utils.utcnow(),
+        "image": image_url  # Dodajemy pole na obrazek
     }
 
 @bot.command()
 async def snipe(ctx):
-    """Pokazuje ostatnio usuniętą wiadomość na tym kanale."""
+    """Pokazuje ostatnio usuniętą wiadomość (tekst + zdjęcie)."""
     channel_id = ctx.channel.id
     
     if channel_id not in last_deleted_msg:
@@ -560,8 +570,16 @@ async def snipe(ctx):
     
     saved = last_deleted_msg[channel_id]
     
-    embed = discord.Embed(description=saved["content"], color=discord.Color.red(), timestamp=saved["time"])
+    # Jeśli wiadomość była pusta (np. samo zdjęcie), wstawiamy tekst zastępczy
+    description = saved["content"] if saved["content"] else "*[Samo zdjęcie]*"
+
+    embed = discord.Embed(description=description, color=discord.Color.red(), timestamp=saved["time"])
     embed.set_author(name=f"{saved['author'].display_name} usunął:", icon_url=saved['author'].display_avatar.url)
+    
+    # Jeśli w usuniętej wiadomości był obrazek, dodajemy go do embeda
+    if saved["image"]:
+        embed.set_image(url=saved["image"])
+
     embed.set_footer(text="Złapano w 4K 📸")
     
     await ctx.send(embed=embed)
@@ -585,6 +603,7 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
 
 
 
