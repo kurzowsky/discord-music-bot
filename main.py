@@ -463,12 +463,25 @@ async def on_member_update(before: Member, after: Member):
             except discord.HTTPException as e:
                 print(f'Wystąpił błąd podczas zmiany pseudonimu użytkownika {after.display_name}: {e}')
 
+@bot.command()
+async def moneta(ctx):
+    """Rzuca wirtualną monetą."""
+    wynik = random.choice(["🪙 Orzeł", "🪙 Reszka"])
+    await ctx.send(f"Wypadło: **{wynik}**")
+
+@bot.command()
+async def kostka(ctx):
+    """Rzuca kostką do gry (1-6)."""
+    wynik = random.randint(1, 6)
+    await ctx.send(f"🎲 Wyrzuciłeś: **{wynik}**")
+    
 # Uruchomienie bota z tokenem
 def main() -> None:
     bot.run(token=TOKEN)
 
 if __name__ == '__main__':
     main()
+
 
 
 
