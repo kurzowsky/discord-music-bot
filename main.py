@@ -229,7 +229,7 @@ async def pomoc(ctx):
             "`!usun <ilość>` - Usuwa podaną liczbę wiadomości.\n"
             "`!zmien_nick <osoba> <nowy_nick>` - Zmienia nick użytkownika.\n"
             "`!block_nickname <osoba> <nick>` - Blokuje zmianę nicku.\n"
-            "`!regulamin` - Wyświetla zasady serwera."
+            "`!regulamin` - Wyświetla zasady serwera.\n"
             "`!snipe` - Pokazuje ostatnią usuniętą wiadomość."
         ),
         inline=False
@@ -405,7 +405,7 @@ async def mv(ctx, team_letter: str):
 
     # 3. Proces przenoszenia
     count = 0
-    await ctx.send(f"found: Znaleziono kanał **{target_channel.name}**. Przenoszę tam **Team {team_letter}**... 🚀")
+    await ctx.send(f"Znaleziono kanał **{target_channel.name}**. Przenoszę tam **Team {team_letter}**... 🚀")
 
     try:
         for member in ostatnie_druzyny[team_letter]:
@@ -603,6 +603,7 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
 
 
 
