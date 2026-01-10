@@ -471,17 +471,6 @@ async def faceit(ctx, *, profile_url: str):
         await ctx.send("Wystąpił błąd podczas przetwarzania żądania.")
         print(e)
 
-# Wydarzenie, które jest wywoływane, gdy bot jest gotowy
-@bot.event
-async def on_ready() -> None:
-    print(f'{bot.user} jest online')
-    zmien_status.start()
-    activity = discord.CustomActivity(name='Owner: kurzowskyy')
-    await bot.change_presence(activity=activity)
-    channel = bot.get_channel(1244337321608876042)
-    if channel:
-        await channel.send('Jestem online')
-
 # Wydarzenie, które jest wywoływane, gdy status użytkownika zmienia się na online
 @bot.event
 async def on_presence_update(before: discord.Member, after: discord.Member):
@@ -558,13 +547,25 @@ async def clear(ctx, ilosc: int = 5):
     await ctx.channel.purge(limit=ilosc + 1) # +1 żeby usunąć też komendę !clear
     # Wysyła info, które znika po 3 sekundach
     await ctx.send(f"🗑️ Usunięto {ilosc} wiadomości.", delete_after=3)
-    
+
+# Wydarzenie, które jest wywoływane, gdy bot jest gotowy
+@bot.event
+async def on_ready() -> None:
+    print(f'{bot.user} jest online')
+    zmien_status.start()
+    #activity = discord.CustomActivity(name='Owner: kurzowskyy')
+    #await bot.change_presence(activity=activity)
+    channel = bot.get_channel(1244337321608876042)
+    if channel:
+        await channel.send('Jestem online')
+
 # Uruchomienie bota z tokenem
 def main() -> None:
     bot.run(token=TOKEN)
 
 if __name__ == '__main__':
     main()
+
 
 
 
