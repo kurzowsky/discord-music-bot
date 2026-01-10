@@ -3,14 +3,15 @@ from dotenv import load_dotenv
 import os
 import discord
 from discord import Intents, Member
-from discord.ext import commands
+from discord.ext import commands, tasks
 from responses import get_faceit_stats
 import asyncio
 import random
 import yt_dlp
+from itertools import cycle
 
 
-# Zastosowanie poprawki dla kompatybilności asyncio w środowiskach takich jak Jupyter
+
 
 
 # Załadowanie zmiennych środowiskowych z pliku .env
@@ -26,7 +27,7 @@ intents.presences = True
 
 # Inicjalizacja bota z intentami i prefiksem komendy
 bot = commands.Bot(command_prefix='!', intents=intents)
-
+bot.remove_command('help')
 # --- KONFIGURACJA YOUTUBE I FFMPEG ---
 YDL_OPTIONS = {
     'format': 'bestaudio/best',
@@ -44,8 +45,23 @@ FFMPEG_OPTIONS = {
     'options': '-vn',
 }
 
-# --- POPRAWIONA FUNKCJA PLAY ---
+statusy = cycle([
+    "Wpisz !pomoc",              # Najważniejsze
+    "!play - Muzyka 🎵",
+    "!faceit - Statystyki 📈",
+    "!teams - Losowanie składów ⚔️",
+    "!mv - Przenoszenie teamów 🚚",
+    "!moneta | !kostka 🎲",     # Krótkie komendy razem
+    "!clear - Sprzątanie 🧹",
+    "!zmien_nick | !regulamin 📜",
+    "kurzowskyy 👑"
+])
 
+@tasks.loop(seconds=10) # Zmienia co 60 sekund
+async def zmien_status():
+    await bot.change_presence(activity=discord.Game(next(statusy)))
+
+# --- POPRAWIONA FUNKCJA PLAY ---
 @bot.command()
 async def play(ctx, *, query):
     """Odtwarza muzykę z YouTube (obsługuje linki i tytuły)."""
@@ -180,6 +196,65 @@ async def ping_error(ctx, error):
     elif isinstance(error, commands.MissingRole):
         await ctx.send("Brak uprawnień. Potrzebujesz roli `ping`, aby użyć tej komendy.")
 
+@bot.command()
+async def pomoc(ctx):
+    """Wyświetla ładną listę wszystkich komend z podziałem na kategorie."""
+    embed = discord.Embed(
+        title="🤖 Centrum Pomocy",
+        description="Oto lista wszystkich dostępnych komend bota. Używaj prefiksu `!` przed każdą z nich.",
+        color=discord.Color.from_rgb(0, 153, 255) # Ładny błękit
+    )
+    
+    # --- SEKCJA MUZYCZNA ---
+    embed.add_field(
+        name="🎵 Muzyka",
+        value=(
+            "`!play <tytuł/link>` - Włącza muzykę z YouTube.\n"
+            "`!pause` - Wstrzymuje odtwarzanie.\n"
+            "`!resume` - Wznawia odtwarzanie.\n"
+            "`!stop` - Wyłącza muzykę i wyrzuca bota."
+        ),
+        inline=False
+    )
+
+    # --- SEKCJA CS2 I GRY ---
+    embed.add_field(
+        name="🎮 CS2 & Organizacja",
+        value=(
+            "`!faceit <link/nick>` - Statystyki gracza Faceit.\n"
+            "`!teams` - Losuje dwie drużyny z osób na kanale.\n"
+            "`!mv <A/B>` - Przenosi wylosowany Team A lub B na wolny kanał."
+        ),
+        inline=False
+    )
+
+    # --- SEKCJA ZABAWY ---
+    embed.add_field(
+        name="🎲 4Fun",
+        value=(
+            "`!moneta` - Rzut monetą (Orzeł/Reszka).\n"
+            "`!kostka` - Rzut kostką (1-6)."
+        ),
+        inline=False
+    )
+
+    # --- SEKCJA ADMINISTRACYJNA ---
+    embed.add_field(
+        name="🛡️ Administracja i Inne",
+        value=(
+            "`!clear <ilość>` - Usuwa podaną liczbę wiadomości.\n"
+            "`!zmien_nick <osoba> <nowy_nick>` - Zmienia nick użytkownika.\n"
+            "`!block_nickname <osoba> <nick>` - Blokuje zmianę nicku.\n"
+            "`!regulamin` - Wyświetla zasady serwera."
+        ),
+        inline=False
+    )
+    
+    # Dodatki estetyczne
+    embed.set_thumbnail(url=bot.user.avatar.url if bot.user.avatar else None) # Avatar bota w rogu
+    embed.set_footer(text=f"Wywołane przez {ctx.author.display_name}", icon_url=ctx.author.display_avatar.url)
+
+    await ctx.send(embed=embed)
 
 # Komenda: Wyświetlenie regulaminu
 @bot.command()
@@ -400,6 +475,7 @@ async def faceit(ctx, *, profile_url: str):
 @bot.event
 async def on_ready() -> None:
     print(f'{bot.user} jest online')
+    zmien_status.start()
     activity = discord.CustomActivity(name='Owner: kurzowskyy')
     await bot.change_presence(activity=activity)
     channel = bot.get_channel(1244337321608876042)
@@ -489,6 +565,7 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
 
 
 
