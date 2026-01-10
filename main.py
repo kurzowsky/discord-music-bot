@@ -45,7 +45,79 @@ FFMPEG_OPTIONS = {
     'options': '-vn',
 }
 
-# --- FUNKCJA PLAY ---
+import discord
+import asyncio
+import yt_dlp
+from discord.ext import commands
+
+# Konfiguracja (zakładam, że masz to zdefiniowane wcześniej, ale dla pewności)
+YDL_OPTIONS = {'format': 'bestaudio/best', 'noplaylist': 'True'}
+FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 'options': '-vn'}
+
+queue = []
+
+# Pomocnicza funkcja do sprawdzania kolejki (uruchamiana po zakończeniu utworu)
+def check_queue(ctx):
+    if queue:
+        # Pobieramy następny utwór i usuwamy go z listy
+        next_query = queue.pop(0)
+        print(f"Pobieram z kolejki: {next_query}")
+        
+        # Musimy zaplanować zadanie asynchroniczne z poziomu funkcji synchronicznej (after)
+        bot = ctx.bot
+        coro = play_audio(ctx, next_query)
+        fut = asyncio.run_coroutine_threadsafe(coro, bot.loop)
+        try:
+            fut.result()
+        except Exception as e:
+            print(f"Błąd w check_queue: {e}")
+    else:
+        print("Kolejka pusta.")
+
+# Główna logika pobierania i odtwarzania (wydzielona z komendy)
+async def play_audio(ctx, query):
+    voice_client = ctx.voice_client
+
+    # Wiadomość o przetwarzaniu (opcjonalnie, żeby nie spamować przy każdym utworze z kolejki)
+    # await ctx.send(f"🔎 Przetwarzam: **{query}**...") 
+
+    try:
+        loop = asyncio.get_event_loop()
+        
+        if query.startswith("http"):
+            search_query = query
+        else:
+            search_query = f"ytsearch:{query}"
+
+        # Pobieranie danych
+        data = await loop.run_in_executor(None, lambda: yt_dlp.YoutubeDL(YDL_OPTIONS).extract_info(search_query, download=False))
+
+        info = None
+        if 'entries' in data:
+            if len(data['entries']) > 0:
+                info = data['entries'][0]
+            else:
+                await ctx.send("❌ Nie znaleziono wyników.")
+                return check_queue(ctx) # Próbujemy następny, jeśli ten się nie udał
+        else:
+            info = data
+
+        url = info['url']
+        title = info.get('title', 'Nieznany utwór')
+
+        # Uruchomienie odtwarzania
+        source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
+        
+        # KLUCZOWY MOMENT: w parametrze 'after' wywołujemy funkcję sprawdzającą kolejkę
+        voice_client.play(source, after=lambda e: check_queue(ctx))
+        
+        await ctx.send(f"🎵 Gram: **{title}**")
+
+    except Exception as e:
+        print(f"Błąd odtwarzania: {e}")
+        await ctx.send("❌ Wystąpił błąd. Przechodzę do następnego utworu.")
+        check_queue(ctx)
+
 @bot.command()
 async def play(ctx, *, query):
     """Odtwarza muzykę z YouTube (obsługuje linki i tytuły)."""
@@ -61,59 +133,30 @@ async def play(ctx, *, query):
         await ctx.voice_client.move_to(voice_channel)
 
     voice_client = ctx.voice_client
+
+    # Jeśli coś już gra, dodajemy do kolejki
     if voice_client.is_playing():
+        if len(queue) >= 5:
+            await ctx.send("❌ Kolejka jest pełna! (Limit: 5 utworów)")
+            return
+        queue.append(query)
+        await ctx.send(f"➕ Dodano do kolejki: **{query}** (pozycja: {len(queue)})")
+    else:
+        # Jeśli nic nie gra, uruchamiamy odtwarzanie od razu
+        await play_audio(ctx, query)
+
+@bot.command()
+async def skip(ctx):
+    """Pomija obecny utwór i przechodzi do następnego w kolejce."""
+    voice_client = ctx.voice_client
+
+    if voice_client and voice_client.is_playing():
+        # Zatrzymanie utworu wywoła funkcję 'after' (czyli check_queue),
+        # która automatycznie pobierze następny utwór.
         voice_client.stop()
-
-    await ctx.send(f"🔎 Przetwarzam: **{query}**...")
-
-    try:
-        loop = asyncio.get_event_loop()
-        
-        # Sprytne rozpoznawanie: czy to link (http) czy tytuł?
-        if query.startswith("http"):
-            # Jeśli link -> pobierz bezpośrednio
-            search_query = query
-            noplaylist = True
-        else:
-            # Jeśli tytuł -> wyszukaj
-            search_query = f"ytsearch:{query}"
-            noplaylist = True
-
-        # Pobieranie danych (w tle, żeby nie zacinać bota)
-        # Zaktualizowana lambda z obsługą błędów extract_info
-        data = await loop.run_in_executor(None, lambda: yt_dlp.YoutubeDL(YDL_OPTIONS).extract_info(search_query, download=False))
-
-        info = None
-        
-        # Logika wyciągania poprawnego wpisu
-        if 'entries' in data:
-            # To jest wynik wyszukiwania lub playlista
-            if len(data['entries']) > 0:
-                info = data['entries'][0]
-            else:
-                await ctx.send("❌ Nie znaleziono wyników.")
-                return
-        else:
-            # To jest bezpośredni link do wideo
-            info = data
-
-        if not info:
-             await ctx.send("❌ Błąd: Nie udało się pobrać informacji o wideo.")
-             return
-
-        url = info['url']
-        title = info.get('title', 'Nieznany utwór')
-        
-        # Uruchomienie odtwarzania
-        source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
-        voice_client.play(source, after=lambda e: print(f'Koniec: {e}') if e else None)
-        
-        await ctx.send(f"🎵 Gram: **{title}**")
-            
-    except Exception as e:
-        # Ignoruj błędy związane z zamykaniem procesu ffmpeg
-        print(f"Szczegóły błędu: {e}")
-        await ctx.send("❌ Wystąpił błąd przy próbie odtworzenia. Sprawdź konsolę.")
+        await ctx.send("⏭️ **Pominięto utwór!**")
+    else:
+        await ctx.send("❌ Nic teraz nie gra, więc nie ma czego pomijać.")
 
 @bot.command()
 async def stop(ctx):
