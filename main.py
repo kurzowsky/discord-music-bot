@@ -474,6 +474,14 @@ async def kostka(ctx):
     """Rzuca kostką do gry (1-6)."""
     wynik = random.randint(1, 6)
     await ctx.send(f"🎲 Wyrzuciłeś: **{wynik}**")
+
+@bot.command()
+@commands.has_permissions(manage_messages=True)
+async def clear(ctx, ilosc: int = 5):
+    """Czyści podaną ilość wiadomości (domyślnie 5). np. !clear 10"""
+    await ctx.channel.purge(limit=ilosc + 1) # +1 żeby usunąć też komendę !clear
+    # Wysyła info, które znika po 3 sekundach
+    await ctx.send(f"🗑️ Usunięto {ilosc} wiadomości.", delete_after=3)
     
 # Uruchomienie bota z tokenem
 def main() -> None:
@@ -481,6 +489,7 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
 
 
 
