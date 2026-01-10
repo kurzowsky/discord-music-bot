@@ -260,34 +260,106 @@ async def regulamin(ctx):
 
     await ctx.send(embed=embed)
 
+# --- ZMIENNA DO PRZECHOWYWANIA OSTATNIEGO LOSOWANIA ---
+# To musi być poza funkcjami, żeby bot "pamiętał" składy po zakończeniu komendy !teams
+ostatnie_druzyny = {"A": [], "B": []}
+
 @bot.command()
 async def teams(ctx):
-    """Dzieli osoby na kanale głosowym na dwie losowe drużyny."""
+    """Dzieli osoby i zapisuje je w pamięci, żeby można było je przenieść."""
+    global ostatnie_druzyny  # Odwołujemy się do zmiennej globalnej
+
     if not ctx.author.voice:
         await ctx.send("❌ Musisz być na kanale głosowym, żeby użyć tej komendy!")
         return
 
-    # Pobierz wszystkich ludzi z kanału (z wyłączeniem botów)
+    # Pobierz obiekty użytkowników (Member), a nie same nazwy
     members = ctx.author.voice.channel.members
-    players = [member.display_name for member in members if not member.bot]
+    players = [member for member in members if not member.bot]
 
     if len(players) < 2:
         await ctx.send("❌ Za mało osób, żeby podzielić na drużyny (minimum 2).")
         return
 
-    random.shuffle(players) # Wymieszaj listę
+    random.shuffle(players)
 
-    # Podziel na pół
     mid_point = len(players) // 2
     team_a = players[:mid_point]
     team_b = players[mid_point:]
 
-    # Stwórz ładną wiadomość
-    embed = discord.Embed(title="⚔️ Losowanie Drużyn", color=discord.Color.gold())
-    embed.add_field(name="🔴 Team A", value="\n".join(team_a), inline=True)
-    embed.add_field(name="🔵 Team B", value="\n".join(team_b), inline=True)
+    # ZAPISUJEMY W PAMIĘCI BOTA
+    ostatnie_druzyny["A"] = team_a
+    ostatnie_druzyny["B"] = team_b
+
+    # Tworzymy listę nazw do wyświetlenia
+    team_a_names = [p.display_name for p in team_a]
+    team_b_names = [p.display_name for p in team_b]
+
+    embed = discord.Embed(title="⚔️ Wylosowane Drużyny", description="Użyj `!mv A <ID_KANAŁU>` lub `!mv B <ID_KANAŁU>`, aby przenieść graczy.", color=discord.Color.gold())
+    embed.add_field(name="🔴 Team A", value="\n".join(team_a_names), inline=True)
+    embed.add_field(name="🔵 Team B", value="\n".join(team_b_names), inline=True)
 
     await ctx.send(embed=embed)
+
+
+@bot.command()
+async def mv(ctx, team_letter: str):
+    """Przenosi wybrany team (A lub B) na inny, wolny kanał automatycznie."""
+    # Konwersja na duże litery
+    team_letter = team_letter.upper()
+
+    # Podstawowe sprawdzenia
+    if team_letter not in ["A", "B"]:
+        await ctx.send("❌ Wybierz drużynę A lub B (np. `!mv B`).")
+        return
+
+    if not ostatnie_druzyny[team_letter]:
+        await ctx.send("❌ Brak zapisanej drużyny. Najpierw użyj `!teams`.")
+        return
+
+    if not ctx.author.voice:
+        await ctx.send("❌ Musisz być na kanale głosowym, żeby bot wiedział skąd przenosić.")
+        return
+
+    current_channel = ctx.author.voice.channel
+    guild = ctx.guild
+
+    # 1. Pobieramy wszystkie kanały głosowe na serwerze (oprócz obecnego)
+    # Sprawdzamy też, czy bot ma uprawnienia, żeby tam wejść (connect)
+    available_channels = [
+        ch for ch in guild.voice_channels 
+        if ch != current_channel and ch.permissions_for(guild.me).move_members
+    ]
+
+    if not available_channels:
+        await ctx.send("❌ Nie znalazłem żadnego innego kanału głosowego, na który mógłbym przenieść graczy.")
+        return
+
+    # 2. Szukamy kanałów PUSTYCH (priorytet)
+    empty_channels = [ch for ch in available_channels if len(ch.members) == 0]
+
+    if empty_channels:
+        target_channel = empty_channels[0]  # Wybierz pierwszy pusty
+    else:
+        target_channel = available_channels[0]  # Jak nie ma pustych, weź pierwszy z brzegu
+
+    # 3. Proces przenoszenia
+    count = 0
+    await ctx.send(f"found: Znaleziono kanał **{target_channel.name}**. Przenoszę tam **Team {team_letter}**... 🚀")
+
+    try:
+        for member in ostatnie_druzyny[team_letter]:
+            if member.voice:  # Sprawdź, czy gracz w ogóle jest na głosowym
+                await member.move_to(target_channel)
+                count += 1
+                await asyncio.sleep(0.5)  # Małe opóźnienie dla bezpieczeństwa API
+        
+        await ctx.send(f"✅ Przeniesiono {count} graczy na kanał **{target_channel.name}**.")
+
+    except discord.Forbidden:
+        await ctx.send("❌ Nie mam uprawnień do przenoszenia (Move Members)!")
+    except Exception as e:
+        await ctx.send(f"❌ Wystąpił błąd: {e}")
 
 # Komenda: Sprawdzenia statystyk Faceit
 @bot.command()
@@ -397,5 +469,6 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
 
 
