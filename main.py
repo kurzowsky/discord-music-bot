@@ -270,8 +270,7 @@ async def faceit(ctx, *, profile_url: str):
         if "faceit.com" in profile_url or "faceittracker.net" in profile_url:
             player_name = profile_url.split("/")[-1]
         else:
-            await ctx.send("Podano nieprawidłowy link. Użyj formatu: https://faceittracker.net/players/NICKNAME")
-            return
+            player_name = str(profile_url)
 
         stats = get_faceit_stats(player_name)
         if not stats:
@@ -371,3 +370,4 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
