@@ -260,7 +260,34 @@ async def regulamin(ctx):
 
     await ctx.send(embed=embed)
 
+@bot.command()
+async def teams(ctx):
+    """Dzieli osoby na kanale głosowym na dwie losowe drużyny."""
+    if not ctx.author.voice:
+        await ctx.send("❌ Musisz być na kanale głosowym, żeby użyć tej komendy!")
+        return
 
+    # Pobierz wszystkich ludzi z kanału (z wyłączeniem botów)
+    members = ctx.author.voice.channel.members
+    players = [member.display_name for member in members if not member.bot]
+
+    if len(players) < 2:
+        await ctx.send("❌ Za mało osób, żeby podzielić na drużyny (minimum 2).")
+        return
+
+    random.shuffle(players) # Wymieszaj listę
+
+    # Podziel na pół
+    mid_point = len(players) // 2
+    team_a = players[:mid_point]
+    team_b = players[mid_point:]
+
+    # Stwórz ładną wiadomość
+    embed = discord.Embed(title="⚔️ Losowanie Drużyn", color=discord.Color.gold())
+    embed.add_field(name="🔴 Team A", value="\n".join(team_a), inline=True)
+    embed.add_field(name="🔵 Team B", value="\n".join(team_b), inline=True)
+
+    await ctx.send(embed=embed)
 
 # Komenda: Sprawdzenia statystyk Faceit
 @bot.command()
@@ -370,4 +397,5 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
 
