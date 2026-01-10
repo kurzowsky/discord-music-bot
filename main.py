@@ -45,23 +45,7 @@ FFMPEG_OPTIONS = {
     'options': '-vn',
 }
 
-statusy = cycle([
-    "Wpisz !pomoc",              # Najważniejsze
-    "!play - Muzyka 🎵",
-    "!faceit - Statystyki 📈",
-    "!teams - Losowanie składów ⚔️",
-    "!mv - Przenoszenie teamów 🚚",
-    "!moneta | !kostka 🎲",     # Krótkie komendy razem
-    "!clear - Sprzątanie 🧹",
-    "!zmien_nick | !regulamin 📜",
-    "kurzowskyy 👑"
-])
-
-@tasks.loop(seconds=10) # Zmienia co 60 sekund
-async def zmien_status():
-    await bot.change_presence(activity=discord.Game(next(statusy)))
-
-# --- POPRAWIONA FUNKCJA PLAY ---
+# --- FUNKCJA PLAY ---
 @bot.command()
 async def play(ctx, *, query):
     """Odtwarza muzykę z YouTube (obsługuje linki i tytuły)."""
@@ -552,12 +536,14 @@ async def clear(ctx, ilosc: int = 5):
 @bot.event
 async def on_ready() -> None:
     print(f'{bot.user} jest online')
-    zmien_status.start()
-    #activity = discord.CustomActivity(name='Owner: kurzowskyy')
-    #await bot.change_presence(activity=activity)
+    activity = discord.CustomActivity(name='🤖 !pomoc | kurzowsky 👑')
+    await bot.change_presence(activity=activity)
     channel = bot.get_channel(1244337321608876042)
     if channel:
-        await channel.send('Jestem online')
+        embed = discord.Embed(
+        title="🚨 Jestem online 🚨",
+    )
+        await channel.send(embed=embed)
 
 # Uruchomienie bota z tokenem
 def main() -> None:
@@ -565,6 +551,7 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
 
 
 
