@@ -33,6 +33,8 @@ Projekt jest zoptymalizowany pod wdrożenie na **Railway** (wykorzystuje Docker 
 ### 1. Klonowanie repozytorium
 ```bash
 git clone https://github.com/kurzowsky/discord-music-bot
+```
+```bash
 cd NAZWA_REPOZYTORIUM 
 ```
 
@@ -54,7 +56,6 @@ python main.py
 ```
 
 ## ☁️ Wdrożenie na Railway
-
 Ten projekt zawiera plik `Dockerfile`, który automatycznie instaluje `Python`, `FFmpeg` oraz `libopus`, naprawiając typowe problemy z odtwarzaniem dźwięku na platformach chmurowych.
 
 1. Wrzuć kod na swoje repozytorium GitHub.
@@ -66,9 +67,7 @@ Ten projekt zawiera plik `Dockerfile`, który automatycznie instaluje `Python`, 
 
 > **Wskazówka:** Aby nie przekroczyć darmowego limitu Railway, w ustawieniach *Service -> Resources* ustaw limit RAM na **512 MB**.
 
-```markdown
 ## 📝 Lista Komend
-
 | Kategoria | Komenda | Opis |
 | :--- | :--- | :--- |
 | **Muzyka** | `!play <tytuł/link>` | Włącza muzykę lub dodaje do kolejki |
@@ -87,6 +86,5 @@ Ten projekt zawiera plik `Dockerfile`, który automatycznie instaluje `Python`, 
 | | `!ping <osoba>` | Trolluje użytkownika (wymaga roli `ping`) |
 | | `!pomoc` | Wyświetla listę komend w Discordzie |
 | | `!regulamin` | Wyświetla zasady serwera |
-```
 ## 🤝 Autor
-Projekt stworzony przez **Kurzowsky**.
+Projekt stworzony przez **kurzowsky**.
