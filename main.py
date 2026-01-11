@@ -1,69 +1,74 @@
-from typing import Final
-from dotenv import load_dotenv
 import os
+import asyncio
+import random
+from typing import Final
+from itertools import cycle
+
+# Importy bibliotek zewnętrznych
 import discord
 from discord import Intents, Member
 from discord.ext import commands, tasks
-from responses import get_faceit_stats
-import asyncio
-import random
+from dotenv import load_dotenv
 import yt_dlp
-from itertools import cycle
 
+# Importy własne
+from responses import get_faceit_stats
 
+# ==========================================
+# KONFIGURACJA I ZMIENNE ŚRODOWISKOWE
+# ==========================================
 
-
-
-# Załadowanie zmiennych środowiskowych z pliku .env
 load_dotenv()
-
 TOKEN: Final[str] = os.getenv('DISCORD_TOKEN')
 
-# Definicja intentów dla bota
+# Definicja intentów (uprawnień) dla bota
 intents: Intents = Intents.default()
 intents.message_content = True
 intents.members = True
 intents.presences = True
 
-# Inicjalizacja bota z intentami i prefiksem komendy
 bot = commands.Bot(command_prefix='!', intents=intents)
-bot.remove_command('help')
-# --- KONFIGURACJA YOUTUBE I FFMPEG ---
+bot.remove_command('help') # Usuwamy domyślną komendę help, bo mamy własną
+
+# Konfiguracja Youtube (yt-dlp)
 YDL_OPTIONS = {
     'format': 'bestaudio/best',
     'noplaylist': True,
-    # 'quiet': True, # Możesz zakomentować na chwilę, żeby widzieć więcej logów w razie błędów
     'default_search': 'auto',
     'source_address': '0.0.0.0',
-    # Usunęliśmy sekcję 'extractor_args' z wymuszaniem iOS/Android, 
-    # bo to ona powoduje błędy o "PO Token" na serwerach.
-    # Pozwalamy yt-dlp samemu wybrać najlepszego klienta (zazwyczaj web/android-creator).
+    # 'quiet': True, # Można odkomentować, żeby zmniejszyć ilość logów
 }
 
+# Konfiguracja FFmpeg (przetwarzanie dźwięku)
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn',
 }
 
-import discord
-import asyncio
-import yt_dlp
-from discord.ext import commands
+# ==========================================
+# GLOBALNE ZMIENNE I PAMIĘĆ BOTA
+# ==========================================
 
-# Konfiguracja (zakładam, że masz to zdefiniowane wcześniej, ale dla pewności)
-YDL_OPTIONS = {'format': 'bestaudio/best', 'noplaylist': 'True'}
-FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 'options': '-vn'}
+queue = [] # Kolejka utworów
+last_deleted_msg = {} # Pamięć usuniętych wiadomości (Snipe)
+ostatnie_druzyny = {"A": [], "B": []} # Pamięć losowania drużyn
+blocked_nicknames = {} # Zablokowane nicki
 
-queue = []
+# Zmienne do Auto-Rozłączania (15 min)
+voice_inactivity_timer = {}  # {guild_id: minuty_bezczynnosci}
+last_music_channel = {}      # {guild_id: kanal_tekstowy_do_pozegnania}
 
-# Pomocnicza funkcja do sprawdzania kolejki (uruchamiana po zakończeniu utworu)
+# ==========================================
+# 🎵 SYSTEM MUZYCZNY (LOGIKA)
+# ==========================================
+
 def check_queue(ctx):
+    """Sprawdza kolejkę po zakończeniu utworu i puszcza następny."""
     if queue:
-        # Pobieramy następny utwór i usuwamy go z listy
         next_query = queue.pop(0)
         print(f"Pobieram z kolejki: {next_query}")
         
-        # Musimy zaplanować zadanie asynchroniczne z poziomu funkcji synchronicznej (after)
+        # Wywołanie asynchronicznej funkcji z poziomu synchronicznego callbacka
         bot = ctx.bot
         coro = play_audio(ctx, next_query)
         fut = asyncio.run_coroutine_threadsafe(coro, bot.loop)
@@ -74,22 +79,17 @@ def check_queue(ctx):
     else:
         print("Kolejka pusta.")
 
-# Główna logika pobierania i odtwarzania (wydzielona z komendy)
 async def play_audio(ctx, query):
+    """Główna funkcja pobierająca i odtwarzająca dźwięk."""
     voice_client = ctx.voice_client
-
-    # Wiadomość o przetwarzaniu (opcjonalnie, żeby nie spamować przy każdym utworze z kolejki)
-    # await ctx.send(f"🔎 Przetwarzam: **{query}**...") 
 
     try:
         loop = asyncio.get_event_loop()
         
-        if query.startswith("http"):
-            search_query = query
-        else:
-            search_query = f"ytsearch:{query}"
+        # Rozpoznawanie czy to link czy wyszukiwanie
+        search_query = query if query.startswith("http") else f"ytsearch:{query}"
 
-        # Pobieranie danych
+        # Pobieranie informacji o utworze (bez pobierania pliku na dysk)
         data = await loop.run_in_executor(None, lambda: yt_dlp.YoutubeDL(YDL_OPTIONS).extract_info(search_query, download=False))
 
         info = None
@@ -98,17 +98,16 @@ async def play_audio(ctx, query):
                 info = data['entries'][0]
             else:
                 await ctx.send("❌ Nie znaleziono wyników.")
-                return check_queue(ctx) # Próbujemy następny, jeśli ten się nie udał
+                return check_queue(ctx)
         else:
             info = data
 
         url = info['url']
         title = info.get('title', 'Nieznany utwór')
 
-        # Uruchomienie odtwarzania
+        # Odtwarzanie
+        # Używamy systemowego ffmpeg (ważne dla Docker/Railway)
         source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
-        
-        # KLUCZOWY MOMENT: w parametrze 'after' wywołujemy funkcję sprawdzającą kolejkę
         voice_client.play(source, after=lambda e: check_queue(ctx))
         
         await ctx.send(f"🎵 Gram: **{title}**")
@@ -118,9 +117,17 @@ async def play_audio(ctx, query):
         await ctx.send("❌ Wystąpił błąd. Przechodzę do następnego utworu.")
         check_queue(ctx)
 
+# ==========================================
+# 🎵 KOMENDY MUZYCZNE
+# ==========================================
+
 @bot.command()
 async def play(ctx, *, query):
     """Odtwarza muzykę z YouTube (obsługuje linki i tytuły)."""
+    
+    # Aktualizacja zmiennych do Auto-Rozłączania
+    last_music_channel[ctx.guild.id] = ctx.channel 
+    voice_inactivity_timer[ctx.guild.id] = 0
     
     if not ctx.author.voice:
         await ctx.send("❌ Musisz być na kanale głosowym!")
@@ -134,7 +141,7 @@ async def play(ctx, *, query):
 
     voice_client = ctx.voice_client
 
-    # Jeśli coś już gra, dodajemy do kolejki
+    # Logika kolejki
     if voice_client.is_playing():
         if len(queue) >= 5:
             await ctx.send("❌ Kolejka jest pełna! (Limit: 5 utworów)")
@@ -142,25 +149,21 @@ async def play(ctx, *, query):
         queue.append(query)
         await ctx.send(f"➕ Dodano do kolejki: **{query}** (pozycja: {len(queue)})")
     else:
-        # Jeśli nic nie gra, uruchamiamy odtwarzanie od razu
         await play_audio(ctx, query)
 
 @bot.command()
 async def skip(ctx):
-    """Pomija obecny utwór i przechodzi do następnego w kolejce."""
+    """Pomija obecny utwór."""
     voice_client = ctx.voice_client
-
     if voice_client and voice_client.is_playing():
-        # Zatrzymanie utworu wywoła funkcję 'after' (czyli check_queue),
-        # która automatycznie pobierze następny utwór.
-        voice_client.stop()
+        voice_client.stop() # To wywoła 'after' -> check_queue
         await ctx.send("⏭️ **Pominięto utwór!**")
     else:
-        await ctx.send("❌ Nic teraz nie gra, więc nie ma czego pomijać.")
+        await ctx.send("❌ Nic teraz nie gra.")
 
 @bot.command()
 async def stop(ctx):
-    """Zatrzymuje muzykę i wyrzuca bota z kanału."""
+    """Zatrzymuje muzykę i wyrzuca bota."""
     if ctx.voice_client:
         await ctx.voice_client.disconnect()
         await ctx.send("🛑 Zatrzymano muzykę i rozłączono.")
@@ -181,294 +184,47 @@ async def resume(ctx):
         ctx.voice_client.resume()
         await ctx.send("▶️ Muzyka wznowiona.")
 
+# ==========================================
+# ⏰ SYSTEM AUTO-ROZŁĄCZANIA (TASK)
+# ==========================================
 
-@bot.command()
-@commands.cooldown(rate=1, per=60, type=commands.BucketType.user)
-@commands.has_role("ping")
-async def ping(ctx, member: discord.Member):
-    guild = ctx.guild
+@tasks.loop(minutes=1.0)
+async def check_inactivity():
+    """Sprawdza co minutę aktywność bota na kanałach głosowych."""
+    for voice_client in bot.voice_clients:
+        guild_id = voice_client.guild.id
 
-    if not member.voice or not member.voice.channel:
-        await ctx.send(f"{member.display_name} nie jest aktualnie na kanale głosowym.")
-        return
+        # Jeśli gra lub pauza -> reset licznika
+        if voice_client.is_playing() or voice_client.is_paused():
+            voice_inactivity_timer[guild_id] = 0
+        else:
+            # Cisza -> zwiększamy licznik
+            timer = voice_inactivity_timer.get(guild_id, 0)
+            voice_inactivity_timer[guild_id] = timer + 1
+            print(f"Licznik bezczynności dla serwera {guild_id}: {timer + 1} min")
 
-    original_channel = member.voice.channel
+            # Po 15 minutach rozłączamy
+            if voice_inactivity_timer[guild_id] >= 15:
+                await voice_client.disconnect()
+                voice_inactivity_timer[guild_id] = 0
+                
+                # Wiadomość pożegnalna
+                if guild_id in last_music_channel:
+                    channel = last_music_channel[guild_id]
+                    try:
+                        await channel.send("💤 **Brak aktywności przez 15 minut.** Wychodzę z kanału. Pa! 👋")
+                    except Exception:
+                        pass
 
-    voice_channels = [c for c in guild.voice_channels if c != original_channel]
+# ==========================================
+# 🎮 CS2, FACEIT I ORGANIZACJA GRY
+# ==========================================
 
-    if len(voice_channels) < 2:
-        await ctx.send("Potrzebne są przynajmniej 3 kanały głosowe, żeby to działało.")
-        return
-
-    channels = random.sample(voice_channels, 2)
-
-    await ctx.send(f"Przerzucanie {member.mention}...")
-
-    try:
-        for i in range(5):
-            await member.move_to(channels[i % 2])
-            await asyncio.sleep(1)
-
-        await member.move_to(original_channel)
-        await ctx.send(f"{member.display_name} wrócił(a) na swój kanał.")
-    except discord.Forbidden:
-        await ctx.send("Nie mam uprawnień do przenoszenia tego użytkownika.")
-    except Exception as e:
-        await ctx.send(f"Wystąpił błąd: {e}")
-
-@ping.error
-async def ping_error(ctx, error):
-    if isinstance(error, commands.CommandOnCooldown):
-        await ctx.send(f"Poczekaj {int(error.retry_after)} sekundy przed ponownym użyciem tej komendy.")
-    elif isinstance(error, commands.MissingRole):
-        await ctx.send("Brak uprawnień. Potrzebujesz roli `ping`, aby użyć tej komendy.")
-
-@bot.command()
-async def pomoc(ctx):
-    """Wyświetla ładną listę wszystkich komend z podziałem na kategorie."""
-    embed = discord.Embed(
-        title="🤖 Centrum Pomocy",
-        description="Oto lista wszystkich dostępnych komend bota. Używaj prefiksu `!` przed każdą z nich.",
-        color=discord.Color.from_rgb(0, 153, 255) # Ładny błękit
-    )
-    
-    # --- SEKCJA MUZYCZNA ---
-    embed.add_field(
-        name="🎵 Muzyka",
-        value=(
-            "`!play <tytuł/link>` - Włącza muzykę z YouTube.\n"
-            "`!pause` - Wstrzymuje odtwarzanie.\n"
-            "`!resume` - Wznawia odtwarzanie.\n"
-            "`!stop` - Wyłącza muzykę i wyrzuca bota."
-        ),
-        inline=False
-    )
-
-    # --- SEKCJA CS2 I GRY ---
-    embed.add_field(
-        name="🎮 CS2 & Organizacja",
-        value=(
-            "`!faceit <link/nick>` - Statystyki gracza Faceit.\n"
-            "`!teams` - Losuje dwie drużyny z osób na kanale.\n"
-            "`!mv <A/B>` - Przenosi wylosowany Team A lub B na wolny kanał."
-        ),
-        inline=False
-    )
-
-    # --- SEKCJA ZABAWY ---
-    embed.add_field(
-        name="🎲 4Fun",
-        value=(
-            "`!moneta` - Rzut monetą (Orzeł/Reszka).\n"
-            "`!kostka` - Rzut kostką (1-6)."
-        ),
-        inline=False
-    )
-
-    # --- SEKCJA ADMINISTRACYJNA ---
-    embed.add_field(
-        name="🛡️ Administracja i Inne",
-        value=(
-            "`!usun <ilość>` - Usuwa podaną liczbę wiadomości.\n"
-            "`!zmien_nick <osoba> <nowy_nick>` - Zmienia nick użytkownika.\n"
-            "`!block_nickname <osoba> <nick>` - Blokuje zmianę nicku.\n"
-            "`!regulamin` - Wyświetla zasady serwera.\n"
-            "`!snipe` - Pokazuje ostatnią usuniętą wiadomość."
-        ),
-        inline=False
-    )
-    
-    # Dodatki estetyczne
-    embed.set_thumbnail(url=bot.user.avatar.url if bot.user.avatar else None) # Avatar bota w rogu
-    embed.set_footer(text=f"Wywołane przez {ctx.author.display_name}", icon_url=ctx.author.display_avatar.url)
-
-    await ctx.send(embed=embed)
-
-# Komenda: Wyświetlenie regulaminu
-@bot.command()
-async def regulamin(ctx):
-    embed = discord.Embed(
-        title="📜 Regulamin Serwera Discord",
-        description="Poniżej znajdziesz zasady, które obowiązują na naszym serwerze. Prosimy o ich przestrzeganie dla zachowania przyjaznej atmosfery.",
-        color=discord.Color.blue()
-    )
-    
-    embed.add_field(
-        name="1️⃣ Postanowienia Ogólne",
-        value=(
-            "1. Korzystanie z serwera oznacza akceptację niniejszego regulaminu.\n"
-            "2. Administracja zastrzega sobie prawo do modyfikacji regulaminu.\n"
-            "3. Nieznajomość regulaminu nie zwalnia użytkownika z jego przestrzegania."
-        ),
-        inline=False
-    )
-    
-    embed.add_field(
-        name="2️⃣ Zasady Ogólne",
-        value=(
-            "1. Szanuj innych użytkowników – zakaz obrażania, grożenia oraz dyskryminacji.\n"
-            "2. Zabrania się spamu, floodingu i wysyłania niechcianych linków.\n"
-            "3. Publikowanie nieodpowiednich treści (np. mowy nienawiści, brutalnych obrazów) jest zabronione."
-        ),
-        inline=False
-    )
-    
-    embed.add_field(
-        name="3️⃣ Zasady Dotyczące Nicków i Avatarów",
-        value=(
-            "1. Nicki i awatary nie mogą zawierać treści obraźliwych ani wulgarnych.\n"
-            "2. Administracja może wymagać zmiany nicku lub awatara, jeśli są one nieodpowiednie."
-        ),
-        inline=False
-    )
-    
-    embed.add_field(
-        name="4️⃣ Zasady Reklamy",
-        value=(
-            "1. Reklamowanie serwerów, produktów lub usług jest dozwolone tylko za zgodą administracji.\n"
-            "2. Zakaz wysyłania reklam w prywatnych wiadomościach do innych użytkowników."
-        ),
-        inline=False
-    )
-    
-    embed.add_field(
-        name="5️⃣ Administracja i Moderacja",
-        value=(
-            "1. Decyzje administracji są ostateczne.\n"
-            "2. W razie problemów kontaktuj się z administracją przez kanał 'Pomoc' lub prywatną wiadomość.\n"
-            "3. Nadużywanie funkcji „pingowania” administracji jest zabronione."
-        ),
-        inline=False
-    )
-    
-    embed.add_field(
-        name="6️⃣ Sankcje",
-        value=(
-            "1. Łamanie regulaminu może skutkować ostrzeżeniem, wyciszeniem, wyrzuceniem lub banem.\n"
-            "2. Administracja ma prawo indywidualnie rozpatrywać każdy przypadek naruszenia zasad."
-        ),
-        inline=False
-    )
-    
-    embed.add_field(
-        name="7️⃣ Prywatność",
-        value=(
-            "1. Zabrania się udostępniania prywatnych informacji innych użytkowników bez ich zgody.\n"
-            "2. Serwer nie gromadzi danych osobowych poza tymi wymaganymi przez Discord."
-        ),
-        inline=False
-    )
-    
-    embed.set_footer(text="Dziękujemy za przestrzeganie zasad i życzymy miłego pobytu na serwerze! 😊")
-
-    await ctx.send(embed=embed)
-
-# --- ZMIENNA DO PRZECHOWYWANIA OSTATNIEGO LOSOWANIA ---
-# To musi być poza funkcjami, żeby bot "pamiętał" składy po zakończeniu komendy !teams
-ostatnie_druzyny = {"A": [], "B": []}
-
-@bot.command()
-async def teams(ctx):
-    """Dzieli osoby i zapisuje je w pamięci, żeby można było je przenieść."""
-    global ostatnie_druzyny  # Odwołujemy się do zmiennej globalnej
-
-    if not ctx.author.voice:
-        await ctx.send("❌ Musisz być na kanale głosowym, żeby użyć tej komendy!")
-        return
-
-    # Pobierz obiekty użytkowników (Member), a nie same nazwy
-    members = ctx.author.voice.channel.members
-    players = [member for member in members if not member.bot]
-
-    if len(players) < 2:
-        await ctx.send("❌ Za mało osób, żeby podzielić na drużyny (minimum 2).")
-        return
-
-    random.shuffle(players)
-
-    mid_point = len(players) // 2
-    team_a = players[:mid_point]
-    team_b = players[mid_point:]
-
-    # ZAPISUJEMY W PAMIĘCI BOTA
-    ostatnie_druzyny["A"] = team_a
-    ostatnie_druzyny["B"] = team_b
-
-    # Tworzymy listę nazw do wyświetlenia
-    team_a_names = [p.display_name for p in team_a]
-    team_b_names = [p.display_name for p in team_b]
-
-    embed = discord.Embed(title="⚔️ Wylosowane Drużyny", description="Użyj `!mv A` lub `!mv B`, aby przenieść graczy.", color=discord.Color.gold())
-    embed.add_field(name="🔴 Team A", value="\n".join(team_a_names), inline=True)
-    embed.add_field(name="🔵 Team B", value="\n".join(team_b_names), inline=True)
-
-    await ctx.send(embed=embed)
-
-
-@bot.command()
-async def mv(ctx, team_letter: str):
-    """Przenosi wybrany team (A lub B) na inny, wolny kanał automatycznie."""
-    # Konwersja na duże litery
-    team_letter = team_letter.upper()
-
-    # Podstawowe sprawdzenia
-    if team_letter not in ["A", "B"]:
-        await ctx.send("❌ Wybierz drużynę A lub B (np. `!mv B`).")
-        return
-
-    if not ostatnie_druzyny[team_letter]:
-        await ctx.send("❌ Brak zapisanej drużyny. Najpierw użyj `!teams`.")
-        return
-
-    if not ctx.author.voice:
-        await ctx.send("❌ Musisz być na kanale głosowym, żeby bot wiedział skąd przenosić.")
-        return
-
-    current_channel = ctx.author.voice.channel
-    guild = ctx.guild
-
-    # 1. Pobieramy wszystkie kanały głosowe na serwerze (oprócz obecnego)
-    # Sprawdzamy też, czy bot ma uprawnienia, żeby tam wejść (connect)
-    available_channels = [
-        ch for ch in guild.voice_channels 
-        if ch != current_channel and ch.permissions_for(guild.me).move_members
-    ]
-
-    if not available_channels:
-        await ctx.send("❌ Nie znalazłem żadnego innego kanału głosowego, na który mógłbym przenieść graczy.")
-        return
-
-    # 2. Szukamy kanałów PUSTYCH (priorytet)
-    empty_channels = [ch for ch in available_channels if len(ch.members) == 0]
-
-    if empty_channels:
-        target_channel = empty_channels[0]  # Wybierz pierwszy pusty
-    else:
-        target_channel = available_channels[0]  # Jak nie ma pustych, weź pierwszy z brzegu
-
-    # 3. Proces przenoszenia
-    count = 0
-    await ctx.send(f"Znaleziono kanał **{target_channel.name}**. Przenoszę tam **Team {team_letter}**... 🚀")
-
-    try:
-        for member in ostatnie_druzyny[team_letter]:
-            if member.voice:  # Sprawdź, czy gracz w ogóle jest na głosowym
-                await member.move_to(target_channel)
-                count += 1
-                await asyncio.sleep(0.5)  # Małe opóźnienie dla bezpieczeństwa API
-        
-        await ctx.send(f"✅ Przeniesiono {count} graczy na kanał **{target_channel.name}**.")
-
-    except discord.Forbidden:
-        await ctx.send("❌ Nie mam uprawnień do przenoszenia (Move Members)!")
-    except Exception as e:
-        await ctx.send(f"❌ Wystąpił błąd: {e}")
-
-# Komenda: Sprawdzenia statystyk Faceit
 @bot.command()
 async def faceit(ctx, *, profile_url: str):
-    """Wpisz !faceit <link do profilu FACEIT>, aby sprawdzić statystyki."""
+    """Sprawdza statystyki gracza Faceit."""
     try:
+        # Obsługa linku lub samego nicku
         if "faceit.com" in profile_url or "faceittracker.net" in profile_url:
             player_name = profile_url.split("/")[-1]
         else:
@@ -476,186 +232,288 @@ async def faceit(ctx, *, profile_url: str):
 
         stats = get_faceit_stats(player_name)
         if not stats:
-            await ctx.send("Nie udało się pobrać statystyki dla tego gracza. Sprawdź, czy nick jest poprawny.")
+            await ctx.send("Nie udało się pobrać statystyki. Sprawdź poprawność nicku.")
             return
 
         embed = discord.Embed(title=f"**Statystyki FACEIT dla {player_name}**", color=0x00ff00)
         embed.add_field(name="Poziom", value=stats["level"], inline=True)
         embed.add_field(name="ELO", value=stats["elo"], inline=True)
-        embed.add_field(name="Rozegrane mecze", value=stats["matches"], inline=True)
+        embed.add_field(name="Mecze", value=stats["matches"], inline=True)
         embed.add_field(name="Win Rate", value=f"{stats['winrate']}", inline=True)
-        embed.add_field(name="Headshot Rate", value=f"{stats['headshots']}", inline=True)
-        embed.add_field(name="K/D Ratio", value=f"{stats['kd_ratio']}", inline=True)
-        embed.add_field(name="**LAST 10 MATCHES**", value="", inline=False)
-        embed.add_field(name="K/D Ratio", value=f"{stats['k/d_ratio_last_10']}", inline=True)
-        embed.add_field(name="Wins", value=f"{stats['wins']}", inline=True)
-        embed.add_field(name="Losses", value=f"{stats['losses']}", inline=True)
-        embed.add_field(name="Results", value=f"{stats['last_10_results']}", inline=True)
+        embed.add_field(name="Headshot %", value=f"{stats['headshots']}", inline=True)
+        embed.add_field(name="K/D", value=f"{stats['kd_ratio']}", inline=True)
+        
+        embed.add_field(name="**OSTATNIE 10 MECZÓW**", value="----------------", inline=False)
+        embed.add_field(name="K/D (Last 10)", value=f"{stats['k/d_ratio_last_10']}", inline=True)
+        embed.add_field(name="Bilans", value=f"W: {stats['wins']} / L: {stats['losses']}", inline=True)
+        embed.add_field(name="Wyniki", value=f"`{stats['last_10_results']}`", inline=True)
 
-        embed.set_footer(text="Statystyki dostarczone przez FaceitTracker.net")
+        embed.set_footer(text="Dane z FaceitTracker.net")
         await ctx.send(embed=embed)
 
     except Exception as e:
-        await ctx.send("Wystąpił błąd podczas przetwarzania żądania.")
+        await ctx.send("Wystąpił błąd podczas przetwarzania.")
         print(e)
 
-# Wydarzenie, które jest wywoływane, gdy status użytkownika zmienia się na online
-@bot.event
-async def on_presence_update(before: discord.Member, after: discord.Member):
-    # ID ról, które chcemy monitorować
-    monitored_roles = {1249508176722661416, 941320096452841572}
+@bot.command()
+async def teams(ctx):
+    """Losuje dwie drużyny z osób na kanale głosowym."""
+    global ostatnie_druzyny
 
-    # Sprawdzenie, czy użytkownik przeszedł ze statusu offline na online
-    if before.status == discord.Status.offline and after.status != discord.Status.offline:
-        # Sprawdzanie, czy użytkownik ma jedną z wymaganych ról
-        if any(role.id in monitored_roles for role in after.roles):
-            # Pobieramy kanał, do którego wysyłamy wiadomość
-            channel = after.guild.get_channel(1244337321608876042)
-            if channel:
-                await channel.send(f'{after.display_name} jest teraz online!')
+    if not ctx.author.voice:
+        await ctx.send("❌ Musisz być na kanale głosowym!")
+        return
 
-# Komenda do zmiany pseudonimu użytkownika (wymaga uprawnień)
-@bot.command(name='zmien_nick')
-@commands.has_permissions(manage_nicknames=True)
-async def change_nick(ctx, member: Member, *, new_nickname: str):
-    try:
-        old_nickname = member.display_name
-        await member.edit(nick=new_nickname)
-        await ctx.send(f'Pseudonim użytkownika {old_nickname} został zmieniony na {new_nickname}')
-    except discord.Forbidden:
-        await ctx.send('Nie mam uprawnień do zmiany pseudonimu tego użytkownika.')
-    except discord.HTTPException as e:
-        await ctx.send(f'Wystąpił błąd podczas zmiany pseudonimu: {e}')
+    members = ctx.author.voice.channel.members
+    players = [member for member in members if not member.bot]
 
-blocked_nicknames = {}  # Słownik do przechowywania blokowanych pseudonimów {user_id: nick_to_block}
+    if len(players) < 2:
+        await ctx.send("❌ Za mało osób (minimum 2).")
+        return
+
+    random.shuffle(players)
+    mid = len(players) // 2
+    team_a = players[:mid]
+    team_b = players[mid:]
+
+    ostatnie_druzyny["A"] = team_a
+    ostatnie_druzyny["B"] = team_b
+
+    team_a_names = [p.display_name for p in team_a]
+    team_b_names = [p.display_name for p in team_b]
+
+    embed = discord.Embed(title="⚔️ Wylosowane Drużyny", description="Użyj `!mv A` lub `!mv B` aby przenieść.", color=discord.Color.gold())
+    embed.add_field(name="🔴 Team A", value="\n".join(team_a_names), inline=True)
+    embed.add_field(name="🔵 Team B", value="\n".join(team_b_names), inline=True)
+    await ctx.send(embed=embed)
 
 @bot.command()
-@commands.has_permissions(administrator=True)
-async def block_nickname(ctx, member: Member, nick: str):
-    """Blokuje lub odblokowuje możliwość zmiany pseudonimu dla konkretnego użytkownika."""
-    if member.id in blocked_nicknames:
-        del blocked_nicknames[member.id]
-        await ctx.send(f'Odblokowano zmianę pseudonimu dla użytkownika {member.display_name}.')
-    else:
-        blocked_nicknames[member.id] = nick
-        await ctx.send(f'Zablokowano zmianę pseudonimu dla użytkownika {member.display_name}. '
-                       f'Pseudonim zostanie zmieniony na "{nick}" w przypadku próby edycji.')
+async def mv(ctx, team_letter: str):
+    """Automatycznie przenosi wybrany Team na wolny kanał."""
+    team_letter = team_letter.upper()
 
-# Wydarzenie wywoływane podczas zmiany pseudonimu użytkownika
-@bot.event
-async def on_member_update(before: Member, after: Member):
-    """Zapobiega zmianie pseudonimu dla użytkowników znajdujących się na liście blokowanych."""
-    if after.id in blocked_nicknames:
-        blocked_nick = blocked_nicknames[after.id]
-        if before.nick != after.nick:
-            try:
-                await after.edit(nick=blocked_nick)
-                print(f'Zmieniono pseudonim użytkownika {after.display_name} na "{blocked_nick}".')
-            except discord.Forbidden:
-                print(f'Bot nie ma uprawnień do zmiany pseudonimu użytkownika {after.display_name}.')
-            except discord.HTTPException as e:
-                print(f'Wystąpił błąd podczas zmiany pseudonimu użytkownika {after.display_name}: {e}')
+    if team_letter not in ["A", "B"]:
+        await ctx.send("❌ Wybierz drużynę A lub B.")
+        return
+
+    if not ostatnie_druzyny[team_letter]:
+        await ctx.send("❌ Brak zapisanej drużyny. Użyj najpierw `!teams`.")
+        return
+
+    if not ctx.author.voice:
+        await ctx.send("❌ Musisz być na kanale głosowym.")
+        return
+
+    current_channel = ctx.author.voice.channel
+    guild = ctx.guild
+
+    # Szukanie dostępnych kanałów
+    available_channels = [
+        ch for ch in guild.voice_channels 
+        if ch != current_channel and ch.permissions_for(guild.me).move_members
+    ]
+
+    if not available_channels:
+        await ctx.send("❌ Nie znalazłem wolnego kanału.")
+        return
+
+    # Priorytet dla pustych kanałów
+    empty_channels = [ch for ch in available_channels if len(ch.members) == 0]
+    target_channel = empty_channels[0] if empty_channels else available_channels[0]
+
+    count = 0
+    await ctx.send(f"🚀 Przenoszę **Team {team_letter}** na kanał **{target_channel.name}**...")
+
+    try:
+        for member in ostatnie_druzyny[team_letter]:
+            if member.voice:
+                await member.move_to(target_channel)
+                count += 1
+                await asyncio.sleep(0.5)
+        
+        await ctx.send(f"✅ Przeniesiono {count} graczy.")
+
+    except Exception as e:
+        await ctx.send(f"❌ Błąd: {e}")
+
+# ==========================================
+# 🎲 4FUN I UŻYTECZNE
+# ==========================================
 
 @bot.command()
 async def moneta(ctx):
-    """Rzuca wirtualną monetą."""
-    wynik = random.choice(["🪙 Orzeł", "🪙 Reszka"])
-    await ctx.send(f"Wypadło: **{wynik}**")
+    await ctx.send(f"Wypadło: **{random.choice(['🪙 Orzeł', '🪙 Reszka'])}**")
 
 @bot.command()
 async def kostka(ctx):
-    """Rzuca kostką do gry (1-6)."""
-    wynik = random.randint(1, 6)
-    await ctx.send(f"🎲 Wyrzuciłeś: **{wynik}**")
+    await ctx.send(f"🎲 Wyrzuciłeś: **{random.randint(1, 6)}**")
+
+@bot.command()
+@commands.cooldown(rate=1, per=60, type=commands.BucketType.user)
+@commands.has_role("ping")
+async def ping(ctx, member: discord.Member):
+    """Troll-ping: przerzuca użytkownika po kanałach."""
+    guild = ctx.guild
+    if not member.voice:
+        await ctx.send("Ten użytkownik nie jest na kanale głosowym.")
+        return
+
+    original_channel = member.voice.channel
+    voice_channels = [c for c in guild.voice_channels if c != original_channel]
+
+    if len(voice_channels) < 2:
+        await ctx.send("Za mało kanałów do zabawy.")
+        return
+
+    channels = random.sample(voice_channels, 2)
+    await ctx.send(f"😈 Przerzucanie {member.mention}...")
+
+    try:
+        for i in range(5):
+            await member.move_to(channels[i % 2])
+            await asyncio.sleep(1)
+        await member.move_to(original_channel)
+        await ctx.send(f"Uff, {member.display_name} wrócił.")
+    except Exception as e:
+        await ctx.send(f"Błąd: {e}")
+
+@ping.error
+async def ping_error(ctx, error):
+    if isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(f"⏳ Cooldown! Poczekaj {int(error.retry_after)}s.")
+    elif isinstance(error, commands.MissingRole):
+        await ctx.send("❌ Potrzebujesz roli `ping`.")
+
+# ==========================================
+# 🛡️ ADMINISTRACJA I MODERACJA
+# ==========================================
 
 @bot.command()
 @commands.has_permissions(manage_messages=True)
 async def usun(ctx, ilosc: int = 5):
-    """Czyści podaną ilość wiadomości (domyślnie 5). np. !clear 10"""
-    await ctx.channel.purge(limit=ilosc + 1) # +1 żeby usunąć też komendę !clear
-    # Wysyła info, które znika po 3 sekundach
+    """Czyści wiadomości."""
+    await ctx.channel.purge(limit=ilosc + 1)
     await ctx.send(f"🗑️ Usunięto {ilosc} wiadomości.", delete_after=3)
 
-last_deleted_msg = {} # Słownik do przechowywania usuniętych wiadomości
+@bot.command(name='zmien_nick')
+@commands.has_permissions(manage_nicknames=True)
+async def change_nick(ctx, member: Member, *, new_nickname: str):
+    """Zmienia nick użytkownika."""
+    try:
+        await member.edit(nick=new_nickname)
+        await ctx.send(f'✅ Zmieniono nick na {new_nickname}')
+    except Exception as e:
+        await ctx.send(f'❌ Błąd: {e}')
 
-# Upewnij się, że masz tę zmienną na górze pliku (jeśli już jest, nie kopiuj jej drugi raz)
-# last_deleted_msg = {} 
-
-@bot.event
-async def on_message_delete(message):
-    """Zapisuje usuniętą wiadomość (tekst oraz obraz) w pamięci."""
-    # Ignoruj, jeśli usunięto wiadomość bota
-    if message.author.bot:
-        return
-    
-    # Sprawdzamy, czy wiadomość miała jakieś załączniki (zdjęcia)
-    image_url = None
-    if message.attachments:
-        # Bierzemy URL pierwszego załącznika (korzystamy z proxy_url, bo jest trwalszy po usunięciu)
-        image_url = message.attachments[0].proxy_url
-
-    # Zapisz dane dla danego kanału
-    last_deleted_msg[message.channel.id] = {
-        "content": message.content,
-        "author": message.author,
-        "time": discord.utils.utcnow(),
-        "image": image_url  # Dodajemy pole na obrazek
-    }
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def block_nickname(ctx, member: Member, nick: str):
+    """Blokuje zmianę nicku."""
+    if member.id in blocked_nicknames:
+        del blocked_nicknames[member.id]
+        await ctx.send(f'🔓 Odblokowano nick dla {member.display_name}.')
+    else:
+        blocked_nicknames[member.id] = nick
+        await ctx.send(f'🔒 Zablokowano nick "{nick}" dla {member.display_name}.')
 
 @bot.command()
 async def snipe(ctx):
-    """Pokazuje ostatnio usuniętą wiadomość (tekst + zdjęcie)."""
+    """Pokazuje ostatnią usuniętą wiadomość."""
     channel_id = ctx.channel.id
     
     if channel_id not in last_deleted_msg:
-        await ctx.send("❌ Nie ma żadnych usuniętych wiadomości do podglądu.")
+        await ctx.send("❌ Brak usuniętych wiadomości w pamięci.")
         return
     
     saved = last_deleted_msg[channel_id]
-    
-    # Jeśli wiadomość była pusta (np. samo zdjęcie), wstawiamy tekst zastępczy
     description = saved["content"] if saved["content"] else "*[Samo zdjęcie]*"
 
     embed = discord.Embed(description=description, color=discord.Color.red(), timestamp=saved["time"])
     embed.set_author(name=f"{saved['author'].display_name} usunął:", icon_url=saved['author'].display_avatar.url)
     
-    # Jeśli w usuniętej wiadomości był obrazek, dodajemy go do embeda
     if saved["image"]:
         embed.set_image(url=saved["image"])
 
     embed.set_footer(text="Złapano w 4K 📸")
-    
     await ctx.send(embed=embed)
+
+@bot.command()
+async def pomoc(ctx):
+    """Menu pomocy."""
+    embed = discord.Embed(
+        title="🤖 Centrum Pomocy",
+        description="Oto lista komend. Użyj `!` przed każdą.",
+        color=discord.Color.from_rgb(0, 153, 255)
+    )
     
-# Wydarzenie, które jest wywoływane, gdy bot jest gotowy
+    embed.add_field(name="🎵 Muzyka", value="`!play`, `!stop`, `!skip`, `!pause`, `!resume`", inline=False)
+    embed.add_field(name="🎮 CS2", value="`!faceit`, `!teams`, `!mv`", inline=False)
+    embed.add_field(name="🎲 4Fun", value="`!moneta`, `!kostka`, `!ping`", inline=False)
+    embed.add_field(name="🛡️ Admin", value="`!usun`, `!zmien_nick`, `!block_nickname`, `!snipe`, `!regulamin`", inline=False)
+    
+    embed.set_thumbnail(url=bot.user.avatar.url if bot.user.avatar else None)
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def regulamin(ctx):
+    """Wyświetla regulamin."""
+    # (Tutaj skróciłem treść dla czytelności kodu, ale wklej swoją pełną treść jeśli chcesz)
+    embed = discord.Embed(title="📜 Regulamin", description="1. Szanuj innych.\n2. Bez spamu.\n3. Admin ma zawsze rację.", color=discord.Color.blue())
+    await ctx.send(embed=embed)
+
+# ==========================================
+# 🔔 EVENTY (ZDARZENIA)
+# ==========================================
+
+@bot.event
+async def on_message_delete(message):
+    if message.author.bot: return
+    image_url = message.attachments[0].proxy_url if message.attachments else None
+    last_deleted_msg[message.channel.id] = {
+        "content": message.content,
+        "author": message.author,
+        "time": discord.utils.utcnow(),
+        "image": image_url
+    }
+
+@bot.event
+async def on_member_update(before: Member, after: Member):
+    if after.id in blocked_nicknames:
+        required_nick = blocked_nicknames[after.id]
+        if after.nick != required_nick:
+            try:
+                await after.edit(nick=required_nick)
+            except:
+                pass
+
+@bot.event
+async def on_presence_update(before: discord.Member, after: discord.Member):
+    monitored_roles = {1249508176722661416, 941320096452841572}
+    if before.status == discord.Status.offline and after.status != discord.Status.offline:
+        if any(role.id in monitored_roles for role in after.roles):
+            channel = after.guild.get_channel(1244337321608876042)
+            if channel:
+                await channel.send(f'👋 {after.display_name} jest teraz online!')
+
 @bot.event
 async def on_ready() -> None:
     print(f'{bot.user} jest online')
+    
+    # Uruchomienie pętli sprawdzającej bezczynność (15 min)
+    if not check_inactivity.is_running():
+        check_inactivity.start()
+        
     activity = discord.CustomActivity(name='🤖 !pomoc | kurzowsky 👑')
     await bot.change_presence(activity=activity)
+    
+    # Wiadomość startowa (opcjonalnie)
     channel = bot.get_channel(1244337321608876042)
     if channel:
-        embed = discord.Embed(
-        title="🚨 Jestem online 🚨",
-    )
-        await channel.send(embed=embed)
+        await channel.send(embed=discord.Embed(title="🚨 Jestem online 🚨", color=discord.Color.green()))
 
-# Uruchomienie bota z tokenem
-def main() -> None:
-    bot.run(token=TOKEN)
+# ==========================================
+# START BOTA
+# ==========================================
 
 if __name__ == '__main__':
-    main()
-
-
-
-
-
-
-
-
-
-
-
-
-
+    bot.run(token=TOKEN)
