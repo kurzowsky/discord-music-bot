@@ -1,74 +1,46 @@
-import os
 import asyncio
 import random
-from typing import Final
-from itertools import cycle
-
-# Importy bibliotek zewnętrznych
+import datetime
 import discord
 from discord import Intents, Member
 from discord.ext import commands, tasks
-from dotenv import load_dotenv
 import yt_dlp
 
 # Importy własne
 from responses import get_faceit_stats
+import config  # Importujemy ustawienia z config.py
 
 # ==========================================
-# KONFIGURACJA I ZMIENNE ŚRODOWISKOWE
+# INICJALIZACJA BOTA
 # ==========================================
 
-load_dotenv()
-TOKEN: Final[str] = os.getenv('DISCORD_TOKEN')
-
-# Definicja intentów (uprawnień) dla bota
 intents: Intents = Intents.default()
 intents.message_content = True
 intents.members = True
 intents.presences = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
-bot.remove_command('help') # Usuwamy domyślną komendę help, bo mamy własną
-
-# Konfiguracja Youtube (yt-dlp)
-YDL_OPTIONS = {
-    'format': 'bestaudio/best',
-    'noplaylist': True,
-    'default_search': 'auto',
-    'source_address': '0.0.0.0',
-    # 'quiet': True, # Można odkomentować, żeby zmniejszyć ilość logów
-}
-
-# Konfiguracja FFmpeg (przetwarzanie dźwięku)
-FFMPEG_OPTIONS = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn',
-}
+bot.remove_command('help')
 
 # ==========================================
-# GLOBALNE ZMIENNE I PAMIĘĆ BOTA
+# GLOBALNE ZMIENNE
 # ==========================================
 
-queue = [] # Kolejka utworów
-last_deleted_msg = {} # Pamięć usuniętych wiadomości (Snipe)
-ostatnie_druzyny = {"A": [], "B": []} # Pamięć losowania drużyn
-blocked_nicknames = {} # Zablokowane nicki
-
-# Zmienne do Auto-Rozłączania (15 min)
-voice_inactivity_timer = {}  # {guild_id: minuty_bezczynnosci}
-last_music_channel = {}      # {guild_id: kanal_tekstowy_do_pozegnania}
+queue = []
+last_deleted_msg = {}
+ostatnie_druzyny = {"A": [], "B": []}
+blocked_nicknames = {}
+voice_inactivity_timer = {}
+last_music_channel = {}
 
 # ==========================================
-# 🎵 SYSTEM MUZYCZNY (LOGIKA)
+# 🎵 SYSTEM MUZYCZNY
 # ==========================================
 
 def check_queue(ctx):
     """Sprawdza kolejkę po zakończeniu utworu i puszcza następny."""
     if queue:
         next_query = queue.pop(0)
-        print(f"Pobieram z kolejki: {next_query}")
-        
-        # Wywołanie asynchronicznej funkcji z poziomu synchronicznego callbacka
         bot = ctx.bot
         coro = play_audio(ctx, next_query)
         fut = asyncio.run_coroutine_threadsafe(coro, bot.loop)
@@ -84,13 +56,11 @@ async def play_audio(ctx, query):
     voice_client = ctx.voice_client
 
     try:
-        loop = asyncio.get_event_loop()
-        
-        # Rozpoznawanie czy to link czy wyszukiwanie
+        loop = asyncio.get_running_loop()
         search_query = query if query.startswith("http") else f"ytsearch:{query}"
 
-        # Pobieranie informacji o utworze (bez pobierania pliku na dysk)
-        data = await loop.run_in_executor(None, lambda: yt_dlp.YoutubeDL(YDL_OPTIONS).extract_info(search_query, download=False))
+        # Używamy opcji z config.py
+        data = await loop.run_in_executor(None, lambda: yt_dlp.YoutubeDL(config.YDL_OPTIONS).extract_info(search_query, download=False))
 
         info = None
         if 'entries' in data:
@@ -104,13 +74,21 @@ async def play_audio(ctx, query):
 
         url = info['url']
         title = info.get('title', 'Nieznany utwór')
+        duration = info.get('duration', 0)
+        thumbnail = info.get('thumbnail', None)
 
-        # Odtwarzanie
-        # Używamy systemowego ffmpeg (ważne dla Docker/Railway)
-        source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTIONS)
+        # Odtwarzanie - używamy opcji z config.py
+        source = discord.FFmpegPCMAudio(url, **config.FFMPEG_OPTIONS)
         voice_client.play(source, after=lambda e: check_queue(ctx))
         
-        await ctx.send(f"🎵 Gram: **{title}**")
+        # Ładny wygląd (Embed) zamiast zwykłego tekstu
+        embed = discord.Embed(title="🎵 Teraz gram", description=f"[{title}]({info.get('webpage_url','')})", color=discord.Color.blurple())
+        if thumbnail:
+            embed.set_thumbnail(url=thumbnail)
+        embed.add_field(name="Czas trwania", value=str(datetime.timedelta(seconds=duration)), inline=True)
+        embed.add_field(name="Dodał", value=ctx.author.display_name, inline=True)
+        
+        await ctx.send(embed=embed)
 
     except Exception as e:
         print(f"Błąd odtwarzania: {e}")
@@ -123,9 +101,7 @@ async def play_audio(ctx, query):
 
 @bot.command()
 async def play(ctx, *, query):
-    """Odtwarza muzykę z YouTube (obsługuje linki i tytuły)."""
-    
-    # Aktualizacja zmiennych do Auto-Rozłączania
+    """Odtwarza muzykę z YouTube."""
     last_music_channel[ctx.guild.id] = ctx.channel 
     voice_inactivity_timer[ctx.guild.id] = 0
     
@@ -141,11 +117,7 @@ async def play(ctx, *, query):
 
     voice_client = ctx.voice_client
 
-    # Logika kolejki
     if voice_client.is_playing():
-        if len(queue) >= 5:
-            await ctx.send("❌ Kolejka jest pełna! (Limit: 5 utworów)")
-            return
         queue.append(query)
         await ctx.send(f"➕ Dodano do kolejki: **{query}** (pozycja: {len(queue)})")
     else:
@@ -154,9 +126,8 @@ async def play(ctx, *, query):
 @bot.command()
 async def skip(ctx):
     """Pomija obecny utwór."""
-    voice_client = ctx.voice_client
-    if voice_client and voice_client.is_playing():
-        voice_client.stop() # To wywoła 'after' -> check_queue
+    if ctx.voice_client and ctx.voice_client.is_playing():
+        ctx.voice_client.stop()
         await ctx.send("⏭️ **Pominięto utwór!**")
     else:
         await ctx.send("❌ Nic teraz nie gra.")
@@ -165,10 +136,9 @@ async def skip(ctx):
 async def stop(ctx):
     """Zatrzymuje muzykę i wyrzuca bota."""
     if ctx.voice_client:
+        queue.clear()
         await ctx.voice_client.disconnect()
         await ctx.send("🛑 Zatrzymano muzykę i rozłączono.")
-    else:
-        await ctx.send("Nie jestem połączony z żadnym kanałem.")
 
 @bot.command()
 async def pause(ctx):
@@ -185,54 +155,51 @@ async def resume(ctx):
         await ctx.send("▶️ Muzyka wznowiona.")
 
 # ==========================================
-# ⏰ SYSTEM AUTO-ROZŁĄCZANIA (TASK)
+# ⏰ SYSTEM AUTO-ROZŁĄCZANIA
 # ==========================================
 
 @tasks.loop(minutes=1.0)
 async def check_inactivity():
-    """Sprawdza co minutę aktywność bota na kanałach głosowych."""
+    """Sprawdza aktywność co minutę."""
     for voice_client in bot.voice_clients:
         guild_id = voice_client.guild.id
-
-        # Jeśli gra lub pauza -> reset licznika
-        if voice_client.is_playing() or voice_client.is_paused():
+        
+        # Jeśli gra lub pauza lub są ludzie na kanale -> reset licznika
+        if voice_client.is_playing() or voice_client.is_paused() or len(voice_client.channel.members) > 1:
             voice_inactivity_timer[guild_id] = 0
         else:
-            # Cisza -> zwiększamy licznik
-            timer = voice_inactivity_timer.get(guild_id, 0)
-            voice_inactivity_timer[guild_id] = timer + 1
-            print(f"Licznik bezczynności dla serwera {guild_id}: {timer + 1} min")
-
-            # Po 15 minutach rozłączamy
+            voice_inactivity_timer[guild_id] = voice_inactivity_timer.get(guild_id, 0) + 1
+            
             if voice_inactivity_timer[guild_id] >= 15:
                 await voice_client.disconnect()
                 voice_inactivity_timer[guild_id] = 0
-                
-                # Wiadomość pożegnalna
                 if guild_id in last_music_channel:
-                    channel = last_music_channel[guild_id]
                     try:
-                        await channel.send("💤 **Brak aktywności przez 15 minut.** Wychodzę z kanału. Pa! 👋")
-                    except Exception:
+                        await last_music_channel[guild_id].send("💤 **Brak aktywności przez 15 minut.** Wychodzę z kanału. Pa! 👋")
+                    except:
                         pass
 
 # ==========================================
-# 🎮 CS2, FACEIT I ORGANIZACJA GRY
+# 🎮 CS2 & FACEIT
 # ==========================================
 
 @bot.command()
 async def faceit(ctx, *, profile_url: str):
     """Sprawdza statystyki gracza Faceit."""
+    msg = await ctx.send("🔍 Pobieram dane z Faceit...")
+    
     try:
-        # Obsługa linku lub samego nicku
         if "faceit.com" in profile_url or "faceittracker.net" in profile_url:
             player_name = profile_url.split("/")[-1]
         else:
             player_name = str(profile_url)
 
-        stats = get_faceit_stats(player_name)
+        # Uruchamiamy funkcję w tle, żeby nie blokować bota
+        loop = asyncio.get_running_loop()
+        stats = await loop.run_in_executor(None, get_faceit_stats, player_name)
+
         if not stats:
-            await ctx.send("Nie udało się pobrać statystyki. Sprawdź poprawność nicku.")
+            await msg.edit(content="Nie udało się pobrać statystyki. Sprawdź poprawność nicku.")
             return
 
         embed = discord.Embed(title=f"**Statystyki FACEIT dla {player_name}**", color=0x00ff00)
@@ -249,15 +216,16 @@ async def faceit(ctx, *, profile_url: str):
         embed.add_field(name="Wyniki", value=f"`{stats['last_10_results']}`", inline=True)
 
         embed.set_footer(text="Dane z FaceitTracker.net")
+        await msg.delete()
         await ctx.send(embed=embed)
 
     except Exception as e:
-        await ctx.send("Wystąpił błąd podczas przetwarzania.")
+        await msg.edit(content="Wystąpił błąd podczas przetwarzania.")
         print(e)
 
 @bot.command()
 async def teams(ctx):
-    """Losuje dwie drużyny z osób na kanale głosowym."""
+    """Losuje dwie drużyny."""
     global ostatnie_druzyny
 
     if not ctx.author.voice:
@@ -289,7 +257,7 @@ async def teams(ctx):
 
 @bot.command()
 async def mv(ctx, team_letter: str):
-    """Automatycznie przenosi wybrany Team na wolny kanał."""
+    """Przenosi Team na wolny kanał."""
     team_letter = team_letter.upper()
 
     if team_letter not in ["A", "B"]:
@@ -307,20 +275,21 @@ async def mv(ctx, team_letter: str):
     current_channel = ctx.author.voice.channel
     guild = ctx.guild
 
-    # Szukanie dostępnych kanałów
+    # Szukanie pustych kanałów
     available_channels = [
         ch for ch in guild.voice_channels 
-        if ch != current_channel and ch.permissions_for(guild.me).move_members
+        if ch != current_channel and len(ch.members) == 0
     ]
+    
+    # Jeśli nie ma pustych, weź jakikolwiek inny
+    if not available_channels:
+        available_channels = [ch for ch in guild.voice_channels if ch != current_channel]
 
     if not available_channels:
         await ctx.send("❌ Nie znalazłem wolnego kanału.")
         return
 
-    # Priorytet dla pustych kanałów
-    empty_channels = [ch for ch in available_channels if len(ch.members) == 0]
-    target_channel = empty_channels[0] if empty_channels else available_channels[0]
-
+    target_channel = available_channels[0]
     count = 0
     await ctx.send(f"🚀 Przenoszę **Team {team_letter}** na kanał **{target_channel.name}**...")
 
@@ -337,7 +306,7 @@ async def mv(ctx, team_letter: str):
         await ctx.send(f"❌ Błąd: {e}")
 
 # ==========================================
-# 🎲 4FUN I UŻYTECZNE
+# 🎲 4FUN I INNE
 # ==========================================
 
 @bot.command()
@@ -385,7 +354,7 @@ async def ping_error(ctx, error):
         await ctx.send("❌ Potrzebujesz roli `ping`.")
 
 # ==========================================
-# 🛡️ ADMINISTRACJA I MODERACJA
+# 🛡️ ADMINISTRACJA
 # ==========================================
 
 @bot.command()
@@ -414,6 +383,10 @@ async def block_nickname(ctx, member: Member, nick: str):
         await ctx.send(f'🔓 Odblokowano nick dla {member.display_name}.')
     else:
         blocked_nicknames[member.id] = nick
+        try:
+            await member.edit(nick=nick)
+        except:
+            pass
         await ctx.send(f'🔒 Zablokowano nick "{nick}" dla {member.display_name}.')
 
 @bot.command()
@@ -439,7 +412,7 @@ async def snipe(ctx):
 
 @bot.command()
 async def pomoc(ctx):
-    """Menu pomocy."""
+    """Menu pomocy - Twoja oryginalna wersja."""
     embed = discord.Embed(
         title="🤖 Centrum Pomocy",
         description="Oto lista komend. Użyj `!` przed każdą.",
@@ -456,13 +429,12 @@ async def pomoc(ctx):
 
 @bot.command()
 async def regulamin(ctx):
-    """Wyświetla regulamin."""
-    # (Tutaj skróciłem treść dla czytelności kodu, ale wklej swoją pełną treść jeśli chcesz)
+    """Wyświetla regulamin - Twoja oryginalna wersja."""
     embed = discord.Embed(title="📜 Regulamin", description="1. Szanuj innych.\n2. Bez spamu.\n3. Admin ma zawsze rację.", color=discord.Color.blue())
     await ctx.send(embed=embed)
 
 # ==========================================
-# 🔔 EVENTY (ZDARZENIA)
+# 🔔 EVENTY
 # ==========================================
 
 @bot.event
@@ -488,32 +460,29 @@ async def on_member_update(before: Member, after: Member):
 
 @bot.event
 async def on_presence_update(before: discord.Member, after: discord.Member):
-    monitored_roles = {1249508176722661416, 941320096452841572}
     if before.status == discord.Status.offline and after.status != discord.Status.offline:
-        if any(role.id in monitored_roles for role in after.roles):
-            channel = after.guild.get_channel(1244337321608876042)
-            if channel:
-                await channel.send(f'👋 {after.display_name} jest teraz online!')
+        # Sprawdzamy, czy użytkownik ma jedną z ról z config.py
+        user_roles = {r.id for r in after.roles}
+        if not config.MONITORED_ROLES.isdisjoint(user_roles):
+            if config.WELCOME_CHANNEL_ID:
+                channel = after.guild.get_channel(config.WELCOME_CHANNEL_ID)
+                if channel:
+                    await channel.send(f'👋 {after.display_name} jest teraz online!')
 
 @bot.event
 async def on_ready() -> None:
     print(f'{bot.user} jest online')
     
-    # Uruchomienie pętli sprawdzającej bezczynność (15 min)
     if not check_inactivity.is_running():
         check_inactivity.start()
         
     activity = discord.CustomActivity(name='🤖 !pomoc | kurzowsky 👑')
     await bot.change_presence(activity=activity)
     
-    # Wiadomość startowa (opcjonalnie)
-    channel = bot.get_channel(1244337321608876042)
-    if channel:
-        await channel.send(embed=discord.Embed(title="🚨 Jestem online 🚨", color=discord.Color.green()))
-
-# ==========================================
-# START BOTA
-# ==========================================
+    if config.WELCOME_CHANNEL_ID:
+        channel = bot.get_channel(config.WELCOME_CHANNEL_ID)
+        if channel:
+            await channel.send(embed=discord.Embed(title="🚨 Jestem online 🚨", color=discord.Color.green()))
 
 if __name__ == '__main__':
-    bot.run(token=TOKEN)
+    bot.run(token=config.TOKEN)
