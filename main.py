@@ -126,6 +126,9 @@ async def play(ctx, *, query):
     voice_client = ctx.voice_client
 
     if voice_client.is_playing():
+        if len(queue) >= 5:
+            await ctx.send("❌ Kolejka jest pełna! (Limit: 5 utworów)")
+            return
         queue.append(query)
         await ctx.send(f"➕ Dodano do kolejki: **{query}** (pozycja: {len(queue)})")
     else:
