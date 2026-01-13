@@ -1,26 +1,21 @@
-# Używamy lekkiej wersji Pythona na Linuxie
-FROM python:3.11-slim
+# Używamy specjalnego obrazu, który ma już zainstalowanego Pythona ORAZ Node.js
+# To gwarantuje, że yt-dlp będzie miał środowisko do działania
+FROM nikolaik/python-nodejs:python3.11-nodejs20
 
-# --- CACHE BUSTER ---
-# Zmiana tej daty wymusi na Railway ponowną instalację pakietów
-ENV REFRESH_DATE=2026-01-13_v2
-
-# Aktualizujemy system i instalujemy FFmpeg, Opus ORAZ Node.js
-# Node.js jest wymagany do działania yt-dlp (Signature solving)
+# Instalujemy tylko FFmpeg i Opus (Node.js już jest!)
 RUN apt-get update && \
-    apt-get install -y ffmpeg libopus0 nodejs && \
+    apt-get install -y ffmpeg libopus0 && \
     rm -rf /var/lib/apt/lists/*
 
 # Ustawiamy folder roboczy
 WORKDIR /app
 
-# Kopiujemy plik z bibliotekami i instalujemy je
+# Kopiujemy i instalujemy biblioteki Python
 COPY requirements.txt .
-# Dodajemy --upgrade, żeby upewnić się, że yt-dlp jest najnowszy
 RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
-# Kopiujemy resztę plików bota
+# Kopiujemy resztę plików
 COPY . .
 
-# Komenda startowa
+# Startujemy
 CMD ["python", "main.py"]
