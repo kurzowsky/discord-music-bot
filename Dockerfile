@@ -1,9 +1,9 @@
 # Używamy lekkiej wersji Pythona na Linuxie
 FROM python:3.11-slim
 
-# Aktualizujemy system i instalujemy FFmpeg oraz Opus "na sztywno"
+# Aktualizujemy system i instalujemy FFmpeg, Opus ORAZ Node.js (Ważne dla yt-dlp!)
 RUN apt-get update && \
-    apt-get install -y ffmpeg libopus0 && \
+    apt-get install -y ffmpeg libopus0 nodejs && \
     rm -rf /var/lib/apt/lists/*
 
 # Ustawiamy folder roboczy

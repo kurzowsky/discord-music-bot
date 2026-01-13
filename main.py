@@ -5,6 +5,7 @@ import discord
 from discord import Intents, Member
 from discord.ext import commands, tasks
 import yt_dlp
+import os
 
 # Importy własne
 from responses import get_faceit_stats
@@ -51,48 +52,64 @@ def check_queue(ctx):
     else:
         print("Kolejka pusta.")
 
-async def play_audio(ctx, query):
-    """Główna funkcja pobierająca i odtwarzająca dźwięk."""
-    voice_client = ctx.voice_client
+def cleanup_file(filename):
+    """Funkcja pomocnicza: Usuwa plik z dysku, żeby nie zapchać serwera."""
+    try:
+        if filename and os.path.exists(filename):
+            os.remove(filename)
+            print(f"🗑️ Usunięto plik: {filename}")
+    except Exception as e:
+        print(f"❌ Błąd usuwania pliku: {e}")
 
+async def play_audio(ctx, query):
+    """Nowa wersja: Pobiera plik -> Gra -> Usuwa (Eliminuje błąd 403)."""
+    voice_client = ctx.voice_client
+    filename = None
+    
     try:
         loop = asyncio.get_running_loop()
         search_query = query if query.startswith("http") else f"ytsearch:{query}"
+        
+        # 1. POBIERANIE (Zmieniono download=True)
+        # Dzięki temu bot ma fizyczny plik i YouTube nie zrywa połączenia
+        data = await loop.run_in_executor(None, lambda: yt_dlp.YoutubeDL(config.YDL_OPTIONS).extract_info(search_query, download=True))
 
-        # Używamy opcji z config.py
-        data = await loop.run_in_executor(None, lambda: yt_dlp.YoutubeDL(config.YDL_OPTIONS).extract_info(search_query, download=False))
+        info = data['entries'][0] if 'entries' in data else data
+        if not info:
+            await ctx.send("❌ Nie znaleziono wyników.")
+            return check_queue(ctx)
 
-        info = None
-        if 'entries' in data:
-            if len(data['entries']) > 0:
-                info = data['entries'][0]
-            else:
-                await ctx.send("❌ Nie znaleziono wyników.")
-                return check_queue(ctx)
-        else:
-            info = data
-
-        url = info['url']
-        title = info.get('title', 'Nieznany utwór')
+        # Pobieramy nazwę pliku, który zapisał się na dysku
+        filename = yt_dlp.YoutubeDL(config.YDL_OPTIONS).prepare_filename(info)
+        
+        title = info.get('title', 'Nieznany')
         duration = info.get('duration', 0)
         thumbnail = info.get('thumbnail', None)
 
-        # Odtwarzanie - używamy opcji z config.py
-        source = discord.FFmpegPCMAudio(url, **config.FFMPEG_OPTIONS)
-        voice_client.play(source, after=lambda e: check_queue(ctx))
+        # 2. ODTWARZANIE Z DYSKU
+        # Podajemy ścieżkę do pliku (filename), a nie URL
+        source = discord.FFmpegPCMAudio(filename, **config.FFMPEG_OPTIONS)
         
-        # Ładny wygląd (Embed) zamiast zwykłego tekstu
+        # Funkcja co robić PO zakończeniu (after)
+        def after_playing(error):
+            cleanup_file(filename) # Najpierw sprzątamy plik
+            check_queue(ctx)       # Potem puszczamy kolejny
+            if error: print(f"Błąd odtwarzacza: {error}")
+
+        voice_client.play(source, after=after_playing)
+        
+        # Embed (Wygląd bez zmian)
         embed = discord.Embed(title="🎵 Teraz gram", description=f"[{title}]({info.get('webpage_url','')})", color=discord.Color.blurple())
-        if thumbnail:
-            embed.set_thumbnail(url=thumbnail)
-        embed.add_field(name="Czas trwania", value=str(datetime.timedelta(seconds=duration)), inline=True)
+        if thumbnail: embed.set_thumbnail(url=thumbnail)
+        embed.add_field(name="Czas", value=str(datetime.timedelta(seconds=duration)), inline=True)
         embed.add_field(name="Dodał", value=ctx.author.display_name, inline=True)
-        
         await ctx.send(embed=embed)
 
     except Exception as e:
-        print(f"Błąd odtwarzania: {e}")
-        await ctx.send("❌ Wystąpił błąd. Przechodzę do następnego utworu.")
+        print(f"Błąd w play_audio: {e}")
+        await ctx.send("❌ Wystąpił błąd odtwarzania.")
+        # W razie awarii też musimy posprzątać plik
+        if filename: cleanup_file(filename)
         check_queue(ctx)
 
 # ==========================================
