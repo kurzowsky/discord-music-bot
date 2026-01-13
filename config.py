@@ -15,6 +15,19 @@ if not TOKEN:
     # To rzuci błąd w konsoli, jeśli zapomnisz dodać tokena
     raise ValueError("❌ Błąd: Brak DISCORD_TOKEN! Dodaj go w .env lub Variables na Railway.")
 
+# ==========================================
+# 🍪 MAGICZNY KOD DO CIASTECZEK
+# ==========================================
+# Sprawdzamy, czy w zmiennych na Railway jest treść ciasteczek
+cookies_env = os.getenv('COOKIES_CONTENT')
+
+if cookies_env:
+    # Jeśli jest, to tworzymy plik cookies.txt na serwerze
+    print("🍪 Znaleziono ciasteczka w zmiennych! Tworzę plik cookies.txt...")
+    with open('cookies.txt', 'w') as f:
+        f.write(cookies_env)
+else:
+    print("⚠️ Ostrzeżenie: Nie znaleziono zmiennej COOKIES_CONTENT.")
 
 # ==========================================
 # ⚙️ KONFIGURACJA ID (Edytuj tutaj)
@@ -42,6 +55,7 @@ YDL_OPTIONS = {
     'noplaylist': True,
     'default_search': 'auto',
     'source_address': '0.0.0.0',
+    'cookiefile': 'cookies.txt',
 }
 
 # Opcje przetwarzania dźwięku (FFmpeg)
