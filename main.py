@@ -61,44 +61,37 @@ def cleanup_file(filename):
     except Exception as e:
         print(f"❌ Błąd usuwania pliku: {e}")
 
+# main.py - podmień tylko funkcję play_audio
+
 async def play_audio(ctx, query):
-    """Nowa wersja: Pobiera plik -> Gra -> Usuwa (Eliminuje błąd 403)."""
+    """Tryb Szybki: Streamowanie z ciasteczkami (Low Latency)."""
     voice_client = ctx.voice_client
-    filename = None
     
     try:
         loop = asyncio.get_running_loop()
         search_query = query if query.startswith("http") else f"ytsearch:{query}"
         
-        # 1. POBIERANIE (Zmieniono download=True)
-        # Dzięki temu bot ma fizyczny plik i YouTube nie zrywa połączenia
-        data = await loop.run_in_executor(None, lambda: yt_dlp.YoutubeDL(config.YDL_OPTIONS).extract_info(search_query, download=True))
+        # 1. POBIERANIE LINKU (download=False = Szybkość)
+        # Pobieramy tylko URL, nie cały plik. To trwa ułamki sekund.
+        data = await loop.run_in_executor(None, lambda: yt_dlp.YoutubeDL(config.YDL_OPTIONS).extract_info(search_query, download=False))
 
         info = data['entries'][0] if 'entries' in data else data
         if not info:
             await ctx.send("❌ Nie znaleziono wyników.")
             return check_queue(ctx)
 
-        # Pobieramy nazwę pliku, który zapisał się na dysku
-        filename = yt_dlp.YoutubeDL(config.YDL_OPTIONS).prepare_filename(info)
-        
+        url = info['url'] # To jest link bezpośredni do audio
         title = info.get('title', 'Nieznany')
         duration = info.get('duration', 0)
         thumbnail = info.get('thumbnail', None)
 
-        # 2. ODTWARZANIE Z DYSKU
-        # Podajemy ścieżkę do pliku (filename), a nie URL
-        source = discord.FFmpegPCMAudio(filename, **config.FFMPEG_OPTIONS)
+        # 2. ODTWARZANIE (STREAM)
+        # FFmpeg łączy się bezpośrednio z YouTube, używając ciasteczek z configu
+        source = discord.FFmpegPCMAudio(url, **config.FFMPEG_OPTIONS)
         
-        # Funkcja co robić PO zakończeniu (after)
-        def after_playing(error):
-            cleanup_file(filename) # Najpierw sprzątamy plik
-            check_queue(ctx)       # Potem puszczamy kolejny
-            if error: print(f"Błąd odtwarzacza: {error}")
-
-        voice_client.play(source, after=after_playing)
+        voice_client.play(source, after=lambda e: check_queue(ctx))
         
-        # Embed (Wygląd bez zmian)
+        # Embed
         embed = discord.Embed(title="🎵 Teraz gram", description=f"[{title}]({info.get('webpage_url','')})", color=discord.Color.blurple())
         if thumbnail: embed.set_thumbnail(url=thumbnail)
         embed.add_field(name="Czas", value=str(datetime.timedelta(seconds=duration)), inline=True)
@@ -106,10 +99,8 @@ async def play_audio(ctx, query):
         await ctx.send(embed=embed)
 
     except Exception as e:
-        print(f"Błąd w play_audio: {e}")
-        await ctx.send("❌ Wystąpił błąd odtwarzania.")
-        # W razie awarii też musimy posprzątać plik
-        if filename: cleanup_file(filename)
+        print(f"Play Error: {e}")
+        await ctx.send("❌ Błąd odtwarzania.")
         check_queue(ctx)
 
 # ==========================================
