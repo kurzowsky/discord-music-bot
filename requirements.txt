@@ -1,6 +1,6 @@
 discord.py
 python-dotenv
-yt-dlp>=2024.0.0
+yt-dlp @ git+https://github.com/yt-dlp/yt-dlp.git@master
 requests
 beautifulsoup4
 PyNaCl
