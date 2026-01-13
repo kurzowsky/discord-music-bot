@@ -61,7 +61,6 @@ def cleanup_file(filename):
     except Exception as e:
         print(f"❌ Błąd usuwania pliku: {e}")
 
-# main.py - podmień tylko funkcję play_audio
 
 async def play_audio(ctx, query):
     """Tryb Szybki: Streamowanie z ciasteczkami (Low Latency)."""
@@ -176,7 +175,7 @@ async def check_inactivity():
         guild_id = voice_client.guild.id
         
         # Jeśli gra lub pauza lub są ludzie na kanale -> reset licznika
-        if voice_client.is_playing() or voice_client.is_paused() or len(voice_client.channel.members) > 1:
+        if voice_client.is_playing() or voice_client.is_paused():
             voice_inactivity_timer[guild_id] = 0
         else:
             voice_inactivity_timer[guild_id] = voice_inactivity_timer.get(guild_id, 0) + 1
